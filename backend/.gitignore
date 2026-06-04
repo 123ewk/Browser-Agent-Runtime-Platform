@@ -1,0 +1,50 @@
+﻿# Python-generated files
+__pycache__/
+*.py[oc]
+*.pyd
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.pyright_cache/
+
+# Linters / formatters
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local data
+*.sqlite
+*.sqlite3
+*.db
+minio/data/
+
+# Distribution
+.installed.cfg
+*.egg
+MANIFEST
