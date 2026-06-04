@@ -32,3 +32,9 @@ dependencies = [
     "tiktoken==0.13.0",
     "uvicorn[standard]>=0.48.0",
 ]
+
+[tool.pytest.ini_options]
+# pytest-asyncio:auto 模式 → 所有 async test 自动识别,无需 per-test 标注,
+# sync test 也不再被强制走 asyncio(消除 "marked as asyncio but not async" 警告)。
+# 现有 conftest.py 已注入 LLM_API_KEY 等必填 secrets,无需额外 env。
+asyncio_mode = "auto"

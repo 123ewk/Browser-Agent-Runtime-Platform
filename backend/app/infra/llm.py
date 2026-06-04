@@ -21,6 +21,7 @@ LangChain 提供的能力(自动获得,无需手写):
 - 把 settings 注入 ChatOpenAI 构造参数
 - 把 dict messages 转成 LangChain 消息对象
 - 把 AIMessage 转回 LLMResponse(项目自有 DTO,保持 Protocol 稳定)
+- chat_stream 把 AIMessageChunk 增量转成 LLMChunk(Phase 1 接入)
 - aclose 释放 ChatOpenAI 内部 httpx 连接池
 
 LangSmith 配置(可选,env 变量,业务代码无感):
@@ -30,12 +31,14 @@ LangSmith 配置(可选,env 变量,业务代码无感):
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 import structlog
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    BaseMessageChunk,
     HumanMessage,
     SystemMessage,
 )
@@ -54,6 +57,27 @@ class LLMResponse(BaseModel):
     raw: dict  # 原始响应,排查用
 
 
+class LLMChunk(BaseModel):
+    """LLM 流式响应块 — chat_stream 每次 yield 一块,服务层用于打字机 + 实时成本。
+
+    设计要点(为什么这样):
+    - content 是 delta(增量)而不是 cumulative(累计):LangChain ChatOpenAI.astream
+      协议就是增量,业务层 `content += chunk.content` 拼接;若是累计会重复
+    - prompt_tokens / completion_tokens 仅 is_final=True 的块非 0:OpenAI / MiMo
+      协议只在末块附带 usage_metadata,中间块保持 0 避免误导
+    - is_final 是显式终态:部分上游(异常路径)可能不发 finish_reason,1-chunk
+      buffer + 末块强制 is_final=True 兜底(见 chat_stream 实现)
+    - raw 保留 AIMessageChunk.model_dump():排错和 LangSmith trace 用
+    """
+    content: str  # 本次增量文本
+    prompt_tokens: int  # 仅最终块非 0
+    completion_tokens: int  # 仅最终块非 0
+    model: str  # 实际命中模型
+    finish_reason: str | None  # "stop" / "length" / None
+    is_final: bool  # 末块 True
+    raw: dict  # 原始 AIMessageChunk
+
+
 class LLMProvider(Protocol):
     """Phase 0 最小 chat 接口。
 
@@ -69,6 +93,29 @@ class LLMProvider(Protocol):
         max_tokens: int | None = 3000,
         timeout: int | None = 30,
     ) -> LLMResponse: ...
+
+
+class StreamableLLMProvider(Protocol):
+    """Phase 1 流式接口 — 与 LLMProvider 平级,不污染原 Protocol。
+
+    为什么独立 Protocol 而非把 chat_stream 加到 LLMProvider:
+    - 尊重既有"不污染本 Protocol"的设计原则,新能力扩边界而不是改契约
+    - service 层按需注入(打字机场景用流式,分类/打分场景用非流),类型系统表达力更高
+    - 单元测试可以单独 mock 流式 Provider,不依赖非流路径
+
+    chat_stream 用 async def + AsyncIterator 返回值,这是 Python typing 推荐的写法:
+    Protocol 侧用 `def` 接受任意可返回 AsyncIterator 的 callable(更宽松),
+    实现侧用 `async def`(更明确)。
+    """
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = 3000,
+        timeout: int | None = 30,
+    ) -> AsyncIterator[LLMChunk]: ...
 
 
 class MiMo:
@@ -167,6 +214,121 @@ class MiMo:
             # response_metadata 里有实际命中的模型名(可能与请求不同,服务端 fallback 时)
             model=str(metadata.get("model_name", chosen_model)),
             raw=response.model_dump(),
+        )
+
+    @staticmethod
+    def _chunk_to_dto(
+        chunk: BaseMessageChunk,
+        *,
+        is_final: bool,
+        usage: dict | None,
+        model: str,
+    ) -> LLMChunk:
+        """AIMessageChunk → LLMChunk 转换器 — 抽离出来便于单测覆盖边界。
+
+        content 优先按 str 处理(LLM 文本路径);list 路径(Multi-modal)
+        仅抽 text 片段,image 跳过(Phase 1 不接多模态,真碰到再说)。
+        """
+        raw_content = chunk.content
+        if isinstance(raw_content, str):
+            text = raw_content
+        elif isinstance(raw_content, list):
+            # Multi-modal:仅抽 {"type": "text"} 片段,image 暂不处理
+            text = "".join(
+                part.get("text", "")
+                for part in raw_content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        else:
+            text = str(raw_content)
+        chunk_meta = getattr(chunk, "response_metadata", None) or {}
+        # finish_reason 只在末块披露:中间块即便上游带了 finish_reason,业务层
+        # 也只关心"最终结束原因",中间块一律返回 None(避免消费者误判流已结束)
+        finish_reason = chunk_meta.get("finish_reason") if is_final else None
+        if is_final and usage:
+            prompt_tokens = int(usage.get("input_tokens", 0))
+            completion_tokens = int(usage.get("output_tokens", 0))
+        else:
+            prompt_tokens = 0
+            completion_tokens = 0
+        return LLMChunk(
+            content=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=model,
+            finish_reason=finish_reason,
+            is_final=is_final,
+            raw=chunk.model_dump(),
+        )
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = 3000,
+        timeout: int | None = 30,
+    ) -> AsyncIterator[LLMChunk]:
+        """流式 chat — 每块是 token 级增量,业务层逐块消费做打字机 / 实时成本。
+
+        与 chat() 的语义差异:
+        - 返回 AsyncIterator[LLMChunk] 而非 LLMResponse,首字延迟更低(无需等全量)
+        - 默认 per-call .bind(streaming=True):ChatOpenAI 默认 streaming=None,
+          部分上游会 fallback 到单块输出,显式 bind 强制流式;不污染 self._client
+        - 1-chunk buffer:非末块先 yield,末块等循环结束后挂 is_final=True 单独 yield,
+          兜底"上游不发 finish_reason"导致 is_final 永远不触发的边界
+        - LangSmith trace(env 激活时)由 LangChain 自动处理,业务代码无感
+        """
+        chosen_model = model or self._default_model
+        # 用 is None 判定而非 `or 3000`:若调用方显式传 max_tokens=0(OpenAI 协议
+        # 0 = 不限制输出),`or` 兜底会把它吞成 3000,违反调用方意图
+        effective_max_tokens = 3000 if max_tokens is None else max_tokens
+        self._log.info(
+            "llm.chat_stream.start",
+            model=chosen_model,
+            message_count=len(messages),
+            temperature=temperature,
+            max_tokens=effective_max_tokens,
+            timeout=timeout,
+        )
+        lc_messages = self._to_lc_messages(messages)
+        stream_kwargs: dict[str, object] = {
+            "temperature": temperature,
+            "max_tokens": effective_max_tokens,
+        }
+        if timeout is not None:
+            stream_kwargs["timeout"] = timeout
+        # .bind() 返回 RunnableBinding,不动 self._client 内部状态,
+        # 后续 chat() 调用仍用默认非流配置
+        streaming_client = self._client.bind(streaming=True)
+        pending_chunk: BaseMessageChunk | None = None
+        final_usage: dict | None = None
+        actual_model = chosen_model
+        chunk_count = 0
+        async for chunk in streaming_client.astream(lc_messages, **stream_kwargs):
+            chunk_count += 1
+            if pending_chunk is not None:
+                # 非末块:1-chunk buffer 触发 yield,is_final=False
+                yield self._chunk_to_dto(
+                    pending_chunk, is_final=False, usage=None, model=actual_model,
+                )
+            pending_chunk = chunk
+            # 实时收集末态信息(usage 通常在末块附带;model_name 可能在中间块)
+            if getattr(chunk, "usage_metadata", None):
+                final_usage = chunk.usage_metadata
+            chunk_meta = getattr(chunk, "response_metadata", None) or {}
+            if chunk_meta.get("model_name"):
+                actual_model = str(chunk_meta["model_name"])
+        # 循环结束:yield 末块强制 is_final=True(兜底"上游不发 finish_reason")
+        if pending_chunk is not None:
+            yield self._chunk_to_dto(
+                pending_chunk, is_final=True, usage=final_usage, model=actual_model,
+            )
+        self._log.info(
+            "llm.chat_stream.end",
+            model=actual_model,
+            chunk_count=chunk_count,
         )
 
     async def aclose(self) -> None:
