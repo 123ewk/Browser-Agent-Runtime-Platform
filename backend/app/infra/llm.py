@@ -29,18 +29,19 @@ LangSmith 配置(可选,env 变量,业务代码无感):
     LANGCHAIN_API_KEY=<your-langsmith-key>
     LANGCHAIN_PROJECT=browser-agent-runtime
 """
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Protocol
+from collections.abc import AsyncGenerator
+from typing import Any, Protocol
 
 import structlog
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
-    BaseMessageChunk,
     HumanMessage,
     SystemMessage,
+    UsageMetadata,
 )
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -50,6 +51,7 @@ from app.core.config import settings
 
 class LLMResponse(BaseModel):
     """统一 LLM 响应 DTO,与具体 provider(LangChain)解耦,业务层只依赖本类。"""
+
     content: str  # 模型回复文本
     prompt_tokens: int  # 提示词 token 数
     completion_tokens: int  # 回复 token 数
@@ -69,6 +71,7 @@ class LLMChunk(BaseModel):
       buffer + 末块强制 is_final=True 兜底(见 chat_stream 实现)
     - raw 保留 AIMessageChunk.model_dump():排错和 LangSmith trace 用
     """
+
     content: str  # 本次增量文本
     prompt_tokens: int  # 仅最终块非 0
     completion_tokens: int  # 仅最终块非 0
@@ -84,6 +87,7 @@ class LLMProvider(Protocol):
     流式 / tool call / structured output 通过 ChatOpenAI.bind_*() 在调用方组合,
     不污染本 Protocol(避免接口膨胀)。这样 service 层只依赖 chat(),后续扩展不破坏分层。
     """
+
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -103,10 +107,15 @@ class StreamableLLMProvider(Protocol):
     - service 层按需注入(打字机场景用流式,分类/打分场景用非流),类型系统表达力更高
     - 单元测试可以单独 mock 流式 Provider,不依赖非流路径
 
-    chat_stream 用 async def + AsyncIterator 返回值,这是 Python typing 推荐的写法:
-    Protocol 侧用 `def` 接受任意可返回 AsyncIterator 的 callable(更宽松),
+    chat_stream 用 async def + AsyncGenerator 返回值,这是 Python typing 推荐的写法:
+    Protocol 侧用 `def` 接受任意可返回 AsyncGenerator 的 callable(更精确),
     实现侧用 `async def`(更明确)。
+    注意:AsyncGenerator 是 AsyncIterator 的子类型,改窄到 AsyncGenerator
+    不会失去任何 mock/测试能力(单测仍可写 AsyncGenerator[LLMChunk] mock),
+    但能让 mypy 检查到 .aclose() 等 generator 专属方法(消费者中途 break
+    时的清理路径依赖 aclose(),类型错会漏掉)。
     """
+
     def chat_stream(
         self,
         messages: list[dict[str, str]],
@@ -115,7 +124,7 @@ class StreamableLLMProvider(Protocol):
         temperature: float = 0.7,
         max_tokens: int | None = 3000,
         timeout: int | None = 30,
-    ) -> AsyncIterator[LLMChunk]: ...
+    ) -> AsyncGenerator[LLMChunk, None]: ...
 
 
 class MiMo:
@@ -189,17 +198,23 @@ class MiMo:
             timeout=timeout,
         )
         lc_messages = self._to_lc_messages(messages)
-        # ChatOpenAI.ainvoke 内部已带:超时 / 重试 / LangSmith trace(env 激活时)
+        # ChatOpenAI 内部已带:超时 / 重试 / LangSmith trace(env 激活时)
         # temperature / max_tokens / timeout 走 per-call 覆盖,不动 self._client 配置
         # timeout=None 时不传,沿用构造期的 settings.llm_timeout_seconds,
         # 这样默认行为不变;调用方传了 timeout 就 per-call 生效。
-        invoke_kwargs: dict[str, object] = {
+        # 用 .bind() 而非 ainvoke(**kwargs):langchain 的 ainvoke 有多个重载,
+        # **dict[str, object] 在 mypy 严格模式下会被错配到 RunnableConfig | None
+        # / list[str] | None 任一重载的位置(实际是 **kwargs: Any,运行时没问题,
+        # 但 mypy 静态分析认不出)。.bind() 是 langchain 官方推荐的等价写法,
+        # 类型干净,而且 RunnableBinding 的 __getattr__ 转发让覆盖选项
+        # 对后续 ainvoke 调用生效,语义和 ainvoke(**kwargs) 完全一致。
+        bind_kwargs: dict[str, Any] = {
             "temperature": temperature,
             "max_tokens": effective_max_tokens,
         }
         if timeout is not None:
-            invoke_kwargs["timeout"] = timeout
-        response = await self._client.ainvoke(lc_messages, **invoke_kwargs)
+            bind_kwargs["timeout"] = timeout
+        response = await self._client.bind(**bind_kwargs).ainvoke(lc_messages)
         # 提取 token 计数:LangChain 1.x 把 usage 放进 AIMessage.usage_metadata
         # 不同上游/版本字段名可能不同(input_tokens vs prompt_tokens),
         # 用 getattr + or {} 兜底,避免字段缺失炸响应解析
@@ -218,10 +233,10 @@ class MiMo:
 
     @staticmethod
     def _chunk_to_dto(
-        chunk: BaseMessageChunk,
+        chunk: BaseMessage,
         *,
         is_final: bool,
-        usage: dict | None,
+        usage: UsageMetadata | None,
         model: str,
     ) -> LLMChunk:
         """AIMessageChunk → LLMChunk 转换器 — 抽离出来便于单测覆盖边界。
@@ -269,11 +284,11 @@ class MiMo:
         temperature: float = 0.7,
         max_tokens: int | None = 3000,
         timeout: int | None = 30,
-    ) -> AsyncIterator[LLMChunk]:
+    ) -> AsyncGenerator[LLMChunk, None]:
         """流式 chat — 每块是 token 级增量,业务层逐块消费做打字机 / 实时成本。
 
         与 chat() 的语义差异:
-        - 返回 AsyncIterator[LLMChunk] 而非 LLMResponse,首字延迟更低(无需等全量)
+        - 返回 AsyncGenerator[LLMChunk] 而非 LLMResponse,首字延迟更低(无需等全量)
         - 默认 per-call .bind(streaming=True):ChatOpenAI 默认 streaming=None,
           部分上游会 fallback 到单块输出,显式 bind 强制流式;不污染 self._client
         - 1-chunk buffer:非末块先 yield,末块等循环结束后挂 is_final=True 单独 yield,
@@ -293,25 +308,44 @@ class MiMo:
             timeout=timeout,
         )
         lc_messages = self._to_lc_messages(messages)
-        stream_kwargs: dict[str, object] = {
+        # 合并所有 per-call options 到一次 .bind():
+        # - streaming=True 强制流式,避免上游 fallback 到单块输出
+        # - temperature / max_tokens / timeout 走 per-call 覆盖
+        # 不动 self._client 内部状态,后续 chat() 调用仍用默认非流配置
+        # 用 .bind() 而非 astream(**kwargs) 的理由和 chat() 一致:
+        # astream 的 **kwargs 在 mypy 严格模式下也会被错配到重载位。
+        stream_bind: dict[str, Any] = {
             "temperature": temperature,
             "max_tokens": effective_max_tokens,
+            "streaming": True,
         }
         if timeout is not None:
-            stream_kwargs["timeout"] = timeout
-        # .bind() 返回 RunnableBinding,不动 self._client 内部状态,
-        # 后续 chat() 调用仍用默认非流配置
-        streaming_client = self._client.bind(streaming=True)
-        pending_chunk: BaseMessageChunk | None = None
-        final_usage: dict | None = None
+            stream_bind["timeout"] = timeout
+        streaming_client = self._client.bind(**stream_bind)
+        # pending_chunk 用 BaseMessage 而非 BaseMessageChunk:
+        # langchain 的 astream 静态类型返回 AIMessage(mypy 严格模式),
+        # 但运行时是 AIMessageChunk — BaseMessage 是两者公共父类,
+        # 类型签名更宽松,匹配实际行为;_chunk_to_dto 内部只用
+        # chunk.content / response_metadata / model_dump() 三个方法,
+        # BaseMessage 已全包,无需窄化。
+        pending_chunk: BaseMessage | None = None
+        # final_usage 用 UsageMetadata TypedDict(不是 dict):
+        # langchain-core 1.x 把 chunk.usage_metadata 标注成 UsageMetadata,
+        # 严格模式下 dict | None 不接受 TypedDict 赋值。TypedDict 在
+        # 运行时就是 dict,.get("input_tokens", 0) 等操作都正常工作,
+        # 所以这里类型收窄到 TypedDict,语义和原来一致。
+        final_usage: UsageMetadata | None = None
         actual_model = chosen_model
         chunk_count = 0
-        async for chunk in streaming_client.astream(lc_messages, **stream_kwargs):
+        async for chunk in streaming_client.astream(lc_messages):
             chunk_count += 1
             if pending_chunk is not None:
                 # 非末块:1-chunk buffer 触发 yield,is_final=False
                 yield self._chunk_to_dto(
-                    pending_chunk, is_final=False, usage=None, model=actual_model,
+                    pending_chunk,
+                    is_final=False,
+                    usage=None,
+                    model=actual_model,
                 )
             pending_chunk = chunk
             # 实时收集末态信息(usage 通常在末块附带;model_name 可能在中间块)
@@ -323,7 +357,10 @@ class MiMo:
         # 循环结束:yield 末块强制 is_final=True(兜底"上游不发 finish_reason")
         if pending_chunk is not None:
             yield self._chunk_to_dto(
-                pending_chunk, is_final=True, usage=final_usage, model=actual_model,
+                pending_chunk,
+                is_final=True,
+                usage=final_usage,
+                model=actual_model,
             )
         self._log.info(
             "llm.chat_stream.end",
@@ -332,12 +369,17 @@ class MiMo:
         )
 
     async def aclose(self) -> None:
-        """FastAPI lifespan shutdown 时调用,释放 ChatOpenAI 内部 httpx 连接池。
+        """FastAPI lifespan shutdown 时调用,释放 ChatOpenAI 底层 httpx 连接池。
 
         不调用会导致 httpx 连接池里的 socket 句柄泄漏,
         在 K8s / 频繁 reload 场景下会触发 'Too many open files'。
+
+        实现细节:ChatOpenAI.async_client 只是 openai.AsyncCompletions 包装,
+        真正的 httpx 连接池在 root_async_client(openai.AsyncOpenAI 实例)上;
+        BaseChatModel 自身没 aclose 方法(原代码 .aclose() 是错的,会 AttributeError),
+        要直接调 root_async_client.close() 释放底层 httpx client。
         """
-        await self._client.aclose()
+        await self._client.root_async_client.close()
 
 
 def create_mimo_provider() -> MiMo:

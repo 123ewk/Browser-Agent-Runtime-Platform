@@ -11,18 +11,19 @@
   严格 setattr 拦截任意非字段赋值,普通 monkeypatch / setattr 会 ValueError,
   用 object.__setattr__ 绕开 Pydantic __setattr__ 走 __dict__ 直写
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessageChunk, UsageMetadata
 from langchain_openai import ChatOpenAI
 
 from app.infra.llm import LLMChunk, MiMo
 
-
 # ---------- 测试夹具 ----------
+
 
 class FakeBinding:
     """可注入的 _client.bind(streaming=True) 返回值。
@@ -33,7 +34,12 @@ class FakeBinding:
 
     def __init__(self, chunks: list[AIMessageChunk]) -> None:
         self._chunks = chunks
+        # astream() 调用记录:验证 lc_messages 作为唯一位置参数透传,无额外 kwargs
         self.received_kwargs: dict[str, Any] = {}
+        # bind() 调用记录:验证 temperature / max_tokens / timeout / streaming
+        # 走 .bind(**bind_kwargs) 路径(而不是 astream(**kwargs))透传
+        self.received_bind_args: tuple[Any, ...] = ()
+        self.received_bind_kwargs: dict[str, Any] = {}
 
     def astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[AIMessageChunk]:
         # 记录调用参数,验证 temperature / max_tokens / timeout 透传
@@ -74,15 +80,35 @@ def _make_chunk(
     )
 
 
+def _make_usage(input_tokens: int, output_tokens: int) -> UsageMetadata:
+    """构造受控 UsageMetadata — 含 total_tokens 三件套,匹配 langchain 1.x TypedDict 契约。
+
+    用法:测试里手动验证 _chunk_to_dto 末块 usage 抽取逻辑时,
+    直接传 _make_usage(12, 7) 比写 `{"input_tokens": 12, "output_tokens": 7}` 干净 —
+    后者缺 total_tokens 在 mypy 严格模式 + TypedDict 下会被静态拒绝。
+    """
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
 def _patch_bind(mimo: MiMo, binding: FakeBinding) -> None:
-    """把 mimo._client.bind 替换为返回 binding 的 lambda。
+    """把 mimo._client.bind 替换为返回 binding 的 lambda(并记录 bind 调用参数)。
 
     必须用 object.__setattr__:ChatOpenAI 是 Pydantic BaseModel,
     默认 __setattr__ 拦截 "非 pydantic 字段" 赋值(ValueError);
     普通 setattr / monkeypatch.setattr 都会炸。
     object.__setattr__ 走 __dict__ 直写,绕过 Pydantic 校验。
     """
-    object.__setattr__(mimo._client, "bind", lambda *a, **kw: binding)
+
+    def fake_bind(*args: Any, **kwargs: Any) -> FakeBinding:
+        binding.received_bind_args = args
+        binding.received_bind_kwargs = kwargs
+        return binding
+
+    object.__setattr__(mimo._client, "bind", fake_bind)
 
 
 def _make_mimo() -> MiMo:
@@ -97,6 +123,7 @@ def _make_mimo() -> MiMo:
 
 
 # ---------- _chunk_to_dto 转换器单测 ----------
+
 
 def test_chunk_to_dto_text_delta_is_passed_through() -> None:
     """content 为 str 时,直接透传(LLM 文本路径)。"""
@@ -120,7 +147,7 @@ def test_chunk_to_dto_final_populates_usage_and_finish_reason() -> None:
     dto = MiMo._chunk_to_dto(
         chunk,
         is_final=True,
-        usage={"input_tokens": 12, "output_tokens": 7},
+        usage=_make_usage(12, 7),
         model="m",
     )
     assert dto.is_final is True
@@ -150,6 +177,7 @@ def test_chunk_to_dto_multimodal_extracts_text_only() -> None:
 
 
 # ---------- chat_stream 行为单测 ----------
+
 
 async def test_chat_stream_accumulates_content() -> None:
     """4 个 token 拼接后 == 完整响应。"""
@@ -253,7 +281,12 @@ async def test_chat_stream_safety_net_when_no_finish_reason() -> None:
 
 
 async def test_chat_stream_passes_per_call_kwargs() -> None:
-    """temperature / max_tokens / timeout 必须透传到 astream(per-call 覆盖)。"""
+    """temperature / max_tokens / timeout 必须透传到 .bind()(per-call 覆盖)。
+
+    实现细节:chat_stream 用 .bind(**bind_kwargs).astream(messages) 而不是
+    astream(messages, **kwargs) — 见 MiMo.chat_stream 内注释(mypy 重载规避)。
+    所以验证点放在 FakeBinding.received_bind_kwargs,而不是 received_kwargs。
+    """
     mimo = _make_mimo()
     binding = FakeBinding(chunks=[_make_chunk("x", finish_reason="stop")])
     _patch_bind(mimo, binding)
@@ -266,10 +299,12 @@ async def test_chat_stream_passes_per_call_kwargs() -> None:
     ):
         pass
 
-    kwargs = binding.received_kwargs["kwargs"]
-    assert kwargs["temperature"] == 0.3
-    assert kwargs["max_tokens"] == 512
-    assert kwargs["timeout"] == 15
+    bind_kwargs = binding.received_bind_kwargs
+    assert bind_kwargs["temperature"] == 0.3
+    assert bind_kwargs["max_tokens"] == 512
+    assert bind_kwargs["timeout"] == 15
+    # streaming=True 是 chat_stream 的硬约束,必须 bind 时强制开
+    assert bind_kwargs["streaming"] is True
 
 
 async def test_chat_stream_max_tokens_zero_not_swallowed() -> None:
@@ -284,14 +319,15 @@ async def test_chat_stream_max_tokens_zero_not_swallowed() -> None:
     ):
         pass
 
-    assert binding.received_kwargs["kwargs"]["max_tokens"] == 0
+    assert binding.received_bind_kwargs["max_tokens"] == 0
 
 
 async def test_chat_stream_timeout_none_not_passed() -> None:
-    """timeout=None 显式传时,不传到 astream(让 ChatOpenAI 用构造期 settings 的超时)。
+    """timeout=None 显式传时,不传到 .bind()(让 ChatOpenAI 用构造期 settings 的超时)。
 
     注意:调用方必须显式传 timeout=None 才会触发此分支;函数默认 timeout=30 会走
     "per-call 覆盖"路径,与 chat() 行为一致。
+    验证点在 received_bind_kwargs:chat_stream 用 .bind() 而非 astream() 传 per-call。
     """
     mimo = _make_mimo()
     binding = FakeBinding(chunks=[_make_chunk("x", finish_reason="stop")])
@@ -303,7 +339,7 @@ async def test_chat_stream_timeout_none_not_passed() -> None:
     ):
         pass
 
-    assert "timeout" not in binding.received_kwargs["kwargs"]
+    assert "timeout" not in binding.received_bind_kwargs
 
 
 async def test_chat_stream_aclose_after_early_break() -> None:
@@ -326,11 +362,13 @@ async def test_chat_stream_aclose_after_early_break() -> None:
 
 # ---------- 回归保护:chat() 不被 stream 改造破坏 ----------
 
+
 async def test_existing_chat_still_returns_llm_response() -> None:
     """回归保护:chat() 必须仍走 ainvoke 路径,返回 LLMResponse(非 AsyncIterator)。"""
     mimo = _make_mimo()
     # chat() 路径:patch 掉 ainvoke,验证它被调用(而不是 astream)
     from langchain_core.messages import AIMessage
+
     fake_response = AIMessage(
         content="hi",
         usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
@@ -350,6 +388,7 @@ async def test_existing_chat_still_returns_llm_response() -> None:
 
 
 # ---------- 类型契约 ----------
+
 
 def test_mimo_satisfies_streamable_protocol() -> None:
     """类型契约:MiMo 实例必须同时满足 LLMProvider 和 StreamableLLMProvider。"""
