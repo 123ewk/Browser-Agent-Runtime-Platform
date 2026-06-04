@@ -3,10 +3,11 @@ from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     # 服务
     app_name: str = "browser-agent-runtime"
-    environment: Literal["dev", "test", "prod"] = "dev" # 环境,默认 dev
+    environment: Literal["dev", "test", "prod"] = "dev"  # 环境,默认 dev
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     # Postgres
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: SecretStr | None = None
     redis_db: int = 0
+    redis_max_connections: int = 20  # 连接池大小,等价于 Postgres pool_size
 
     # S3 / MinIO
     s3_endpoint: str = "http://localhost:9000"
@@ -49,7 +51,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,  # 不区分大小写,默认 False
-        extra="ignore", # 忽略额外的环境变量,默认 raise
+        extra="ignore",  # 忽略额外的环境变量,默认 raise
     )
 
 
