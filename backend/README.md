@@ -1,4 +1,4 @@
-﻿# Browser Agent Runtime - Backend
+# Browser Agent Runtime - Backend
 
 > Phase 0 阶段:后端骨架 + 基础设施 + LLM 调通
 
@@ -74,11 +74,37 @@ uv run pytest -m integration        # 真实 LLM(需要 Key)
 uv run alembic revision --autogenerate -m "init"
 uv run alembic upgrade head
 uv run alembic downgrade -1
-
-# Pre-commit
-uv run pre-commit install
-uv run pre-commit run --all-files
 ```
+
+## Pre-commit 工作流
+
+`.pre-commit-config.yaml` 在 `backend/`(跟 `pyproject.toml` 物理紧贴、内聚)。
+git commit 触发 hook 时 cwd = git 根(项目根),所以 **install 必须用 `--config` 显式指 path**,
+否则 hook 找不到配置会静默失败。
+
+```bash
+# 在 backend/ 目录下(uv sync 之后)
+# 一次性安装 git hook
+uv run pre-commit install --config backend/.pre-commit-config.yaml
+
+# 手动跑全量校验
+uv run pre-commit run --all-files --config backend/.pre-commit-config.yaml
+
+# 跑单个 hook
+uv run pre-commit run ruff --config backend/.pre-commit-config.yaml
+uv run pre-commit run mypy --config backend/.pre-commit-config.yaml
+```
+
+跑通的 hook 链(10 个):
+
+| hook | 作用 |
+|---|---|
+| pre-commit-hooks v5.0.0 | trailing-whitespace / EOF / yaml / toml / large-files / merge-conflict / private-key |
+| ruff-pre-commit v0.7.4 | `--fix --exit-non-zero-on-fix` + format(line-length=100, black 兼容,规则集 E/F/W/I/UP/B/SIM) |
+| mirrors-mypy v2.1.0 | `mypy==2.1.0` 跟 `pyproject.toml` 对齐,pydantic plugin 启用,中等严格度(详见 `pyproject.toml` `[tool.mypy]`) |
+
+升级 hook 版本:`uv run pre-commit autoupdate --config backend/.pre-commit-config.yaml`(谨慎,
+langchain / openai 这类三方库版本变更可能连带触发 mypy 类型签名变化)。
 
 ## 不在 Phase 0 范围
 

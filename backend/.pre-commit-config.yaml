@@ -1,4 +1,4 @@
-﻿# See https://pre-commit.com for more information
+# See https://pre-commit.com for more information
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -18,3 +18,29 @@ repos:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
       - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        # 读 backend/pyproject.toml 的 [tool.mypy] 配置。
+        # 默认 cwd 是 git 根,必须显式传 --config-file 指向 backend/。
+        # pass_filenames: false → mypy 扫整个 backend/,新增模块立即被检查,
+        # 而不是只检查 git staged 文件(那样会漏掉间接 import 的模块)。
+        # additional_dependencies 必须锁死版本,否则 pre-commit 隔离 venv 的
+        # mypy 版本 ≠ uv 装的版本,会导致"本地通过 / CI 失败"。
+        files: ^backend/(app|tests|alembic)/.*\.py$
+        args: ["--config-file=backend/pyproject.toml", "backend/app", "backend/tests", "backend/alembic"]
+        pass_filenames: false
+        additional_dependencies:
+          - mypy==2.1.0
+          - pydantic>=2.13.4
+          - pydantic-settings>=2.14.1
+          - sqlalchemy[asyncio]>=2.0.50
+          - fastapi>=0.136.3
+          - alembic>=1.18.4
+          - structlog>=25.5.0
+          - pytest>=9.0.3
+          - langchain-core>=1.4.0
+          - langchain-openai>=0.3.7
+          - redis>=8.0.0

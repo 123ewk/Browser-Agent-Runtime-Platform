@@ -337,4 +337,3 @@ uv run pytest -m integration  # 真实 LLM 调用,可选
 | SecretStr 误用 `os.getenv` 泄露          | 强制走 Settings,代码 review 卡               |
 | FastAPI lifespan 启动顺序错               | 显式按顺序,各阶段打日志                           |
 | `pytest-asyncio` 在不同 event loop 下不稳定 | fixture 显式 `loop_scope="session"` + 文档 |
-

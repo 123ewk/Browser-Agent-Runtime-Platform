@@ -5,6 +5,7 @@ app.core.config.Settings 里 postgres_password / s3_* / llm_api_key 都是 Secre
 
 同时显式覆盖 LLM_PROVIDER,避免用户 shell 里残留的 LLM_PROVIDER=xiaomi 之类的脏值污染测试。
 """
+
 import os
 
 # 必填 secrets:用 setdefault,允许 CI 环境用真值覆盖

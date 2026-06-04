@@ -38,6 +38,7 @@ structlog 在这三项上综合最优。
 
 应用启动期由 main.py 调用 configure_logging()。
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,8 +53,8 @@ from app.core.config import settings
 
 def _add_app_metadata(_: Any, __: str, event_dict: EventDict) -> EventDict:
     """每条日志自动带 app / env,避免业务层重复打。Processor 三参签名固定。"""
-    event_dict["app"] = settings.app_name # 应用名称,默认 browser-agent-runtime
-    event_dict["env"] = settings.environment # 环境,默认 dev
+    event_dict["app"] = settings.app_name  # 应用名称,默认 browser-agent-runtime
+    event_dict["env"] = settings.environment  # 环境,默认 dev
     return event_dict
 
 
@@ -64,39 +65,45 @@ def _shared_processors() -> list[Processor]:
     processor 链是 单向、不可逆 的,不能乱序。
     """
     return [
-        structlog.contextvars.merge_contextvars,            # 合并 contextvars,跨 asyncio 任务传 request_id,把当前协程的 ContextVar(如 request_id)合并进事件
-        structlog.processors.add_log_level,                 # 加 level 字段
+        structlog.contextvars.merge_contextvars,  # 合并 contextvars,跨 asyncio 任务传 request_id,把当前协程的 ContextVar(如 request_id)合并进事件
+        structlog.processors.add_log_level,  # 加 level 字段
         # CallsiteParameterAdder 用 sys._getframe() 拿调用方文件 basename,注入到 event_dict["module"]。
         # 注意:25+ API 是传一个参数列表,不是 *args。structlog 25+ 的标准做法,比自己解析 _name 稳。
         structlog.processors.CallsiteParameterAdder(
             [structlog.processors.CallsiteParameter.MODULE],
         ),
-        structlog.processors.TimeStamper(fmt="iso", utc=True),  # UTC ISO8601,展示层再转本地,加 UTC ISO8601 时间戳
-        _add_app_metadata,                                  # 加 app / env 固定元信息
-        structlog.processors.StackInfoRenderer(),           # stack_info=True 时打印调用栈,只有 log.info(..., stack_info=True) 时才打印调用栈,平时不生效
-        structlog.processors.format_exc_info,               # 只有 log.exception(...) 才把异常转成多行 traceback(回溯) 塞进 exception(异常) 字段
+        structlog.processors.TimeStamper(
+            fmt="iso", utc=True
+        ),  # UTC ISO8601,展示层再转本地,加 UTC ISO8601 时间戳
+        _add_app_metadata,  # 加 app / env 固定元信息
+        structlog.processors.StackInfoRenderer(),  # stack_info=True 时打印调用栈,只有 log.info(..., stack_info=True) 时才打印调用栈,平时不生效
+        structlog.processors.format_exc_info,  # 只有 log.exception(...) 才把异常转成多行 traceback(回溯) 塞进 exception(异常) 字段
     ]
 
 
 def configure_logging() -> None:
     """初始化全局日志。幂等:重复调用以最后一次配置为准。"""
-    level = getattr(logging, settings.log_level) # getattr() 获取日志级别,如 logging.INFO
+    level = getattr(logging, settings.log_level)  # getattr() 获取日志级别,如 logging.INFO
     is_dev = settings.environment == "dev"
 
     # 1) stdlib logging 兜底:把 uvicorn / sqlalchemy / alembic 的日志也并入同一管道
-    logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level, force=True) # force=True 确保配置生效
+    logging.basicConfig(
+        format="%(message)s", stream=sys.stdout, level=level, force=True
+    )  # force=True 确保配置生效
 
     # 2) 选择渲染器:dev 彩色可读,prod JSON 给日志系统(Loki/ELK)消费
     renderer: Processor = (
-        structlog.dev.ConsoleRenderer(colors=is_dev) # dev 彩色可读
-        if is_dev 
-        else structlog.processors.JSONRenderer() # prod JSON 给日志系统(Loki/ELK)消费
+        structlog.dev.ConsoleRenderer(colors=is_dev)  # dev 彩色可读
+        if is_dev
+        else structlog.processors.JSONRenderer()  # prod JSON 给日志系统(Loki/ELK)消费
     )
 
     structlog.configure(
         processors=[*_shared_processors(), renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(level), # 过滤日志级别,只打印 >= level 的日志
-        context_class=dict, # 上下文类,默认 dict
-        logger_factory=structlog.PrintLoggerFactory(), # 打印日志工厂,默认 console
+        wrapper_class=structlog.make_filtering_bound_logger(
+            level
+        ),  # 过滤日志级别,只打印 >= level 的日志
+        context_class=dict,  # 上下文类,默认 dict
+        logger_factory=structlog.PrintLoggerFactory(),  # 打印日志工厂,默认 console
         cache_logger_on_first_use=True,  # 性能:首次后不再走 wrapper_class 解析,直接返回缓存的日志器,避免重复解析
     )

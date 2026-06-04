@@ -1,4 +1,5 @@
 """app.core.logging 单测。覆盖:环境分支 / processor 链 / 异常 / contextvars / 幂等性。"""
+
 from __future__ import annotations
 
 import json
@@ -49,6 +50,7 @@ def _parse_json_from(out: str) -> dict[str, Any]:
 
 # ---------- 基础契约 ----------
 
+
 def test_configure_logging_does_not_raise(fake_settings: Any) -> None:
     """configure_logging() 不抛异常是最基本的契约。"""
     configure_logging()
@@ -70,6 +72,7 @@ def test_stdlib_logging_level_applied(fake_settings: Any) -> None:
 
 # ---------- 渲染分支 ----------
 
+
 def test_dev_renders_colorful_console(
     fake_settings: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -84,9 +87,7 @@ def test_dev_renders_colorful_console(
     assert not [ln for ln in out.splitlines() if ln.lstrip().startswith("{")]
 
 
-def test_prod_renders_json(
-    fake_settings: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_prod_renders_json(fake_settings: Any, capsys: pytest.CaptureFixture[str]) -> None:
     """prod 环境输出必须是合法 JSON,可被 json.loads 解析。"""
     fake_settings.environment = "prod"
     configure_logging()
@@ -97,6 +98,7 @@ def test_prod_renders_json(
 
 
 # ---------- processor 链各处理器职责 ----------
+
 
 def test_processor_chain_injects_app_and_env(
     fake_settings: Any, capsys: pytest.CaptureFixture[str]
@@ -152,6 +154,7 @@ def test_processor_chain_injects_utc_timestamp(
 
 # ---------- 异常 + contextvars ----------
 
+
 def test_exception_renders_traceback_in_field(
     fake_settings: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -168,9 +171,7 @@ def test_exception_renders_traceback_in_field(
     assert "Traceback" in record["exception"]
 
 
-def test_contextvars_auto_merged(
-    fake_settings: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_contextvars_auto_merged(fake_settings: Any, capsys: pytest.CaptureFixture[str]) -> None:
     """bind_contextvars 后,后续所有日志自动带 request_id(无需手动传,跨 asyncio 任务传播)。"""
     fake_settings.environment = "prod"
     configure_logging()

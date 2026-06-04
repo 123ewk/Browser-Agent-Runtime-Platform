@@ -1,4 +1,5 @@
 """API 形状参考,不是实现代码。"""
+
 from contextvars import ContextVar
 from typing import Optional
 
