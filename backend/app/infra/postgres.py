@@ -142,6 +142,6 @@ def create_postgres_client() -> PostgresClient:
         _build_dsn(),
         pool_size=settings.postgres_pool_size,
         max_overflow=settings.postgres_max_overflow,
-        pool_pre_ping=True,
+        pool_pre_ping=True,  #  SQLAlchemy 数据库连接池健康检测参数，作用：每次从连接池取出连接前，自动 ping 校验连接是否存活。
     )
     return PostgresClient(engine)

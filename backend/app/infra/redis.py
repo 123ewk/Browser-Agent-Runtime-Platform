@@ -163,6 +163,6 @@ def create_redis_client() -> RedisClient:
     pool = ConnectionPool.from_url(
         _build_url(),
         max_connections=settings.redis_max_connections,
-        decode_responses=False,
+        decode_responses=False,  # 解码响应,保留 bytes,支持二进制 value(pickle / protobuf)
     )
     return RedisClient(Redis(connection_pool=pool))

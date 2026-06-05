@@ -91,5 +91,5 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["alembic.*", "langchain.*", "langgraph.*", "openai.*", "playwright.*"]
+module = ["alembic.*", "langchain.*", "langgraph.*", "openai.*", "playwright.*", "aioboto3.*", "aiobotocore.*", "botocore.*"]
 ignore_missing_imports = true
