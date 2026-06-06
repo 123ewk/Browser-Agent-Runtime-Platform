@@ -1,8 +1,9 @@
-"""UserSession 表 —— 服务端会话管理。
+"""UserSession 模型 —— 用 token 字符串做主键,无需自增 id。
 
-每个 session 持有 JWT token 作为主键,关联到用户。
-支持主动注销:delete token 即可清除会话。
-"""
+为什么 token 做主键而非自增 id + token 双字段:
+- 查 session 永远用 token 查,自增 id 永远用不到,多一个索引就是多一份写放大
+- 注销时 DELETE WHERE token=? 走主键索引,比走二级索引快一个 B+tree 层级
+- JWT token 本身已包含随机性和唯一性,无需额外 UUID PK"""
 
 from __future__ import annotations
 

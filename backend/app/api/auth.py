@@ -28,7 +28,7 @@ _bearer = HTTPBearer()
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: UserCreate, session: AsyncSession = Depends(get_session)) -> TokenResponse:
-    """注册新用户 —— 检查用户名唯一性 → bcrypt 哈希 → 签发 JWT。"""
+    """注册 —— 409 而非 200 避免用户名冲突被当作成功。"""
     user_repo = UserRepository(session)
 
     existing = await user_repo.get_by_username(body.username)
@@ -47,7 +47,8 @@ async def register(body: UserCreate, session: AsyncSession = Depends(get_session
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: UserLogin, session: AsyncSession = Depends(get_session)) -> TokenResponse:
-    """登录 —— 验证用户名/密码 → 创建 session → 返回 JWT。"""
+    """登录 —— 用 verify_credentials 而非暴露 hashed_password 给路由层,
+    防止密码哈希意外泄露到日志或响应体。"""
     user_repo = UserRepository(session)
 
     user = await user_repo.verify_credentials(body.username, body.password)
@@ -68,6 +69,7 @@ async def logout(
     session: AsyncSession = Depends(get_session),
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> None:
-    """注销 —— 删除当前 session,清除服务端会话。"""
+    """注销 —— 主动删 session,不等 token 自然过期。
+    降低被窃 token 在有效期内可重放的窗口。"""
     await SessionRepository(session).delete(credentials.credentials)
     log.info("auth.logout", user_id=str(current_user.id))

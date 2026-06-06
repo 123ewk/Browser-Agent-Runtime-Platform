@@ -1,8 +1,12 @@
-"""Task 表 —— 用户任务主记录。
+"""Task 模型 —— 用字符串存状态而非 Python enum。
 
-包含任务目标、当前状态、最终结构结果(jsonb)。
-状态机: PENDING → RUNNING → WAITING_USER ⇄ RUNNING → COMPLETED / FAILED / CANCELLED
-"""
+为什么状态用 String(20) 而非 Enum:
+- 状态值需要写入 JSONB 审计日志 / API 响应,Enum 序列化需要额外 adapter
+- 数据库直接查出来就是字符串,不需要做 enum<->str 转换
+- 后续加新状态只需改模型文件,不涉及 Enum 类的 import
+
+为什么用 jsonb 存 result: agent 执行结果结构不确定(截图 URL / 错误栈 / 结构化数据),
+jsonb 可以容纳任意结构而无需 migration。"""
 
 from __future__ import annotations
 

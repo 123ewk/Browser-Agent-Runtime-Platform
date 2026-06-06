@@ -1,4 +1,9 @@
-"""TaskRepository —— 任务 CRUD + 按用户分页列表。"""
+"""TaskRepository —— 只实现业务需要的增改查,不提供 delete。
+
+为什么没有 delete:
+- 任务的物理删除意味着丢失 agent 执行轨迹,不符合审计要求
+- 如果用户想"删除"任务,后续加软删除字段(deleted_at),不走 DELETE SQL
+"""
 
 from __future__ import annotations
 
@@ -12,7 +17,13 @@ from app.schema.task import TaskCreate, TaskListResponse, TaskOut, TaskUpdate
 
 
 class TaskRepository:
-    """任务数据访问。"""
+    """update 只修改 status 和 result 两个字段,不改 goal。
+
+    为什么 update 设计为只改 status + result:
+    - status 由 agent 执行引擎驱动状态机流转
+    - result 是执行结束后的产物
+    - 其他字段(goal/user_id/created_at)在创建后就不该被修改
+    """
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

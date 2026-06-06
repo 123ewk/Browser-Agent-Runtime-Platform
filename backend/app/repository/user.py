@@ -17,7 +17,7 @@ from app.schema.user import UserOut
 
 
 class UserRepository:
-    """用户数据访问 —— 接收 AsyncSession,返回 UserOut。"""
+    """返回 UserOut 不含 hashed_password,防止调用方意外序列化泄露。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

@@ -20,7 +20,11 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
-    """每次请求分配一个 AsyncSession,请求结束关闭。"""
+    """每次请求分配独立 AsyncSession,请求结束自动关闭。
+
+    为什么用 yield 而非 context manager: FastAPI Depends 的
+    generator 模式在响应返回后执行 finally,保证连接不泄漏。
+    """
     session: AsyncSession = request.app.state.deps.pg.session()
     try:
         yield session
@@ -33,10 +37,13 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
-    """从 Authorization header 提取 Bearer token,验证后返回当前用户。
+    """验证 Bearer token → 返回当前用户,失败返 401。
 
-    验证链路: token 解码 → 查 Session 表(未过期) → 查 User 表。
-    任一失败返 401。
+    为什么先查 Session 再查 User: 两步独立验证可以区分
+    "token 已过期/被注销"和"用户已被删除"两个场景,
+    运维排查时日志更精确。
+    为什么用 Depends 而非中间件: 中间件拦截所有路由,
+    连 /health 也要过一道认证;Depends 只作用于需要的路由。
     """
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")

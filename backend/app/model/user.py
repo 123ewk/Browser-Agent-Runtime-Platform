@@ -1,8 +1,11 @@
-"""User 表 —— 存储用户注册信息和密码哈希。
+"""User 模型 —— hashed_password 只在入库前和验证时使用,不出序列化层。
 
-密码用 bcrypt 哈希,不在数据库存储明文。
-SecretStr 在日志/异常时自动脱敏,即使意外序列化也不会泄露。
-"""
+为什么用 bcrypt 而非 SHA256: 密码需要抗彩虹表,计算慢反而安全;
+SHA256 是快速哈希,适合校验文件完整性,不适合密码存储。
+
+为什么 hashed_password 不被包含在 UserOut Pydantic schema 中:
+防止调用方(API handler)意外将 password hash 序列化进响应体。
+密码 hash 只在 UserRepository.verify_credentials 内部使用。"""
 
 from __future__ import annotations
 

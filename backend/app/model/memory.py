@@ -1,7 +1,10 @@
-"""Memory 表 —— 用户跨会话记忆存储。
+"""Memory 模型 —— Phase 1 只建表,为 Phase 2+ 的语义检索做准备。
 
-使用 pgvector 存储 embedding 向量,支持语义相似度检索。
-Phase 1 只建表 + pgvector 扩展,写入/查询逻辑 Phase 2+ 实现。
+为什么 Phase 1 只建表:
+- 任务的语义检索依赖完整的 agent 执行链路,而 Phase 1 只做 HTTP CRUD
+- 先建表保证 migration 一次到位,避免后续加表时需要从零迁移(生产环境可能已经有用户数据)
+
+为什么用 Vector(1024): MiMo embedding 模型输出是 1024 维向量,固定维度让 pgvector 可以用 IVFFlat 索引加速检索。
 """
 
 from __future__ import annotations

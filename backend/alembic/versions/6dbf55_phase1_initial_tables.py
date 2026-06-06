@@ -1,7 +1,13 @@
-"""Phase 1 初始表结构 —— 6 张业务表 + pgvector 扩展。
+"""Phase 1 初始迁移 —— 6 张表一次性创建,不拆多个迁移。
 
-创建: users / user_sessions / tasks / task_steps / checkpoints / memories
-pgvector: CREATE EXTENSION IF NOT EXISTS vector
+为什么 6 张表合并在一个迁移里:
+- Phase 1 之前没有生产数据,不存在零停机迁移的需求
+- 合成一个文件保证 CI 初始化时只跑一次,减少迁移耗时
+- 后续的变更再拆小 migration,降低回滚风险
+
+为什么 memories 用原生 SQL 而非 op.create_table:
+pgvector 的 Vector(1024) 不是标准 SQL 类型,alembic autogenerate
+不识别,用 op.create_table 生成的 DDL 会丢类型信息。
 """
 
 from typing import Sequence, Union

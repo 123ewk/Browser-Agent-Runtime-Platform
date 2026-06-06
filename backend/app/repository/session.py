@@ -1,6 +1,8 @@
-"""SessionRepository —— 服务端会话管理。
+"""SessionRepository —— 以 token 本身为主键,省去额外映射表。
 
-JWT token 作为主键,支持按需注销。
+为什么不用自增 id + token 双字段:
+- 查 session 永远用 token 查,自增 id 永远用不到,多写一个索引浪费
+- 用 token 做主键,delete where token=? 单条 SQL 走主键,比走二级索引快
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from app.schema.session import SessionDTO
 
 
 class SessionRepository:
-    """会话数据访问 —— token 为主键,增删查。"""
+    """查询走主键,无需额外索引,注销直接 DELETE。」"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

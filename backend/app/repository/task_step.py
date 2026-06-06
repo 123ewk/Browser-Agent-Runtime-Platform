@@ -1,4 +1,9 @@
-"""TaskStepRepository —— 任务步骤记录。"""
+"""TaskStepRepository —— 步骤追加写入,不修改历史。
+
+为什么只增不删不改:
+- 步骤是审计日志,修改历史会破坏可追溯性
+- Phase 2+ 的 LangGraph state 依赖 immutable 步骤序列
+"""
 
 from __future__ import annotations
 
@@ -12,7 +17,7 @@ from app.schema.task_step import TaskStepOut
 
 
 class TaskStepRepository:
-    """步骤数据访问。"""
+    """只实现了 create + list_by_task, 没有 update 方法"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
