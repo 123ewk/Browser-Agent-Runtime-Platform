@@ -8,6 +8,9 @@ dependencies = [
     "aioboto3>=15.5.0",
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
+    "bcrypt>=5.0.0",
+    "pgvector>=0.4.0",
+    "PyJWT>=2.10.0",
     "fastapi>=0.136.3",
     "httpx>=0.28.1",
     "langchain-core>=1.4.0",
@@ -60,6 +63,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # 测试文件允许 assert、不强制类型(测试重点是行为不是签名)
 "tests/**" = ["B011", "S101"]
+# ORM 模型:from __future__ import annotations 延迟求值导致 F821 误报(前向引用合法)
+"app/model/*.py" = ["F821"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -91,5 +96,5 @@ module = "tests.*"
 disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
-module = ["alembic.*", "langchain.*", "langgraph.*", "openai.*", "playwright.*", "aioboto3.*", "aiobotocore.*", "botocore.*"]
+module = ["alembic.*", "aioboto3.*", "aiobotocore.*", "bcrypt", "botocore.*", "jwt", "langchain.*", "langgraph.*", "openai.*", "pgvector.*", "playwright.*"]
 ignore_missing_imports = true

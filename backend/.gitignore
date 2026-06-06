@@ -1,4 +1,4 @@
-﻿# Python-generated files
+# Python-generated files
 __pycache__/
 *.py[oc]
 *.pyd
@@ -48,3 +48,11 @@ minio/data/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Lock files(本地依赖锁定,按需提交)
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# OS
+Thumbs.db

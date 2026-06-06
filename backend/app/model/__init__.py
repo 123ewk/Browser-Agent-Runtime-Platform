@@ -1,1 +1,26 @@
-"""Layer marker. 禁止反向依赖:api -> service -> repository -> model."""
+"""ORM 模型层 —— 禁止反向依赖:api → service → repository → model。
+
+所有模型在此集中导出,便于 Alembic 和 repository 层统一引用:
+  from app.model import Base, User, Task, ...
+
+pgvector 扩展通过 Memory.embedding(Vector(1024)) 使用,迁移中手动创建。
+"""
+
+from app.model.base import Base, UUIDMixin
+from app.model.checkpoint import Checkpoint
+from app.model.memory import Memory
+from app.model.session import UserSession
+from app.model.task import Task
+from app.model.task_step import TaskStep
+from app.model.user import User
+
+__all__ = [
+    "Base",
+    "UUIDMixin",
+    "User",
+    "UserSession",
+    "Task",
+    "TaskStep",
+    "Checkpoint",
+    "Memory",
+]

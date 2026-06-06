@@ -44,7 +44,12 @@ from typing import Protocol
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.config import settings
 
@@ -86,6 +91,9 @@ class PostgresClient:
 
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+        self._session_factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
         self._log = structlog.get_logger(__name__)
 
     async def health_check(self) -> bool:
@@ -115,6 +123,14 @@ class PostgresClient:
             )
             return False
         return True
+
+    def session(self) -> AsyncSession:
+        """获取一个新的 AsyncSession —— 生命周期由调用方管理。
+
+        Phase 1+ 通过 FastAPI Depends 每次请求分配一个 session,
+        请求结束时在 dependency teardown 中关闭。
+        """
+        return self._session_factory()
 
     async def aclose(self) -> None:
         """释放连接池 — FastAPI lifespan shutdown 时调。

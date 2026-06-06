@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 30
     llm_max_retries: int = 3
 
+    # JWT - 认证
+    jwt_secret_key: SecretStr = SecretStr("dev-jwt-secret-change-in-production")
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440 * 30  # 30 天
+
     # 浏览器(Phase 1 用,Phase 0 先预留)
     browser_headless: bool = True
     browser_max_contexts: int = 10

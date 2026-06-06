@@ -9,6 +9,7 @@ app.core.config.Settings 里 postgres_password / s3_* / llm_api_key 都是 Secre
 import os
 
 # 必填 secrets:用 setdefault,允许 CI 环境用真值覆盖
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key-for-tests-only")
 os.environ.setdefault("POSTGRES_PASSWORD", "test-pg-password")
 os.environ.setdefault("S3_ACCESS_KEY", "test-s3-key")
 os.environ.setdefault("S3_SECRET_KEY", "test-s3-secret")
