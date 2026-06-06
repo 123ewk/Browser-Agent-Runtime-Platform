@@ -124,7 +124,9 @@ class S3Client:
         """
         try:
             async with self.get_client() as client:
-                await client.list_buckets()
+                await (
+                    client.list_buckets()
+                )  # S3 标准接口，查询当前存储服务 (MinIO / 阿里云 OSS) 下所有 Bucket 存储桶列表
         except (BotoCoreError, ClientError) as exc:
             self._log.warning(
                 "s3.health_check.failed",
