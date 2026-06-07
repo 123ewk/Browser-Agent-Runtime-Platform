@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 from redis.asyncio import Redis
 
-from app.infra.redis import RedisClient
+from app.infra.redis import RedisClient, RedisKeys
 from app.schema.session import SessionDTO
 from app.service.session_cache import SessionCache
 
@@ -89,7 +89,7 @@ async def test_set_calls_setex(cache: SessionCache, session: SessionDTO) -> None
 
     setex.assert_awaited_once()
     args, _ = setex.call_args
-    assert args[0] == f"session:{session.token}"  # key
+    assert args[0] == RedisKeys.session(session.token)  # key
     assert args[1] == 3600  # TTL
     # value 是 JSON 字符串(redis-py 内部编码为 bytes)
     assert isinstance(args[2], str)
@@ -107,4 +107,4 @@ async def test_delete_calls_del(cache: SessionCache) -> None:
 
     await cache.delete("some-token")
 
-    delete.assert_awaited_once_with("session:some-token")
+    delete.assert_awaited_once_with(RedisKeys.session("some-token"))

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AgenticFlow - 设置</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary-fixed": "#0f0069",
+                      "inverse-on-surface": "#f0f1f2",
+                      "on-primary": "#ffffff",
+                      "surface-container-highest": "#e1e3e4",
+                      "surface-container": "#edeeef",
+                      "primary-fixed-dim": "#c3c0ff",
+                      "primary-container": "#4f46e5",
+                      "outline": "#777587",
+                      "on-background": "#191c1d",
+                      "surface-container-lowest": "#ffffff",
+                      "on-tertiary-container": "#ffd4a4",
+                      "error-container": "#ffdad6",
+                      "surface-container-high": "#e7e8e9",
+                      "on-secondary-fixed": "#002113",
+                      "primary-fixed": "#e2dfff",
+                      "outline-variant": "#c7c4d8",
+                      "error": "#ba1a1a",
+                      "inverse-primary": "#c3c0ff",
+                      "tertiary": "#684000",
+                      "secondary-fixed-dim": "#4edea3",
+                      "secondary": "#006c49",
+                      "on-error-container": "#93000a",
+                      "on-secondary": "#ffffff",
+                      "on-primary-fixed-variant": "#3323cc",
+                      "surface-bright": "#f8f9fa",
+                      "on-tertiary-fixed": "#2a1700",
+                      "surface-tint": "#4d44e3",
+                      "surface": "#f8f9fa",
+                      "tertiary-fixed": "#ffddb8",
+                      "primary": "#3525cd",
+                      "on-surface": "#191c1d",
+                      "secondary-container": "#6cf8bb",
+                      "on-secondary-container": "#00714d",
+                      "surface-variant": "#e1e3e4",
+                      "on-secondary-fixed-variant": "#005236",
+                      "on-surface-variant": "#464555",
+                      "tertiary-container": "#885500",
+                      "secondary-fixed": "#6ffbbe",
+                      "inverse-surface": "#2e3132",
+                      "surface-container-low": "#f3f4f5",
+                      "on-tertiary-fixed-variant": "#653e00",
+                      "on-error": "#ffffff",
+                      "tertiary-fixed-dim": "#ffb95f",
+                      "on-tertiary": "#ffffff",
+                      "background": "#f8f9fa",
+                      "on-primary-container": "#dad7ff",
+                      "surface-dim": "#d9dadb"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "unit": "4px",
+                      "stack-md": "16px",
+                      "gutter": "16px",
+                      "stack-lg": "24px",
+                      "stack-sm": "8px",
+                      "container-padding": "24px"
+              },
+              "fontFamily": {
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "label-sm": [
+                              "JetBrains Mono"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "label-md": [
+                              "JetBrains Mono"
+                      ],
+                      "body-sm": [
+                              "Inter"
+                      ],
+                      "headline-lg": [
+                              "Inter"
+                      ],
+                      "headline-sm": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-sm": [
+                              "11px",
+                              {
+                                      "lineHeight": "14px",
+                                      "letterSpacing": "0.02em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-md": [
+                              "13px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "body-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "18px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-lg": [
+                              "30px",
+                              {
+                                      "lineHeight": "38px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-sm": [
+                              "18px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-surface dark:bg-background text-on-surface antialiased min-h-screen flex">
+<!-- SideNavBar -->
+<nav class="fixed h-full w-[260px] left-0 top-0 border-r border-outline-variant dark:border-outline bg-surface-container-lowest dark:bg-inverse-surface flex flex-col py-stack-lg z-50 transition-transform duration-300 transform -translate-x-full md:translate-x-0" id="mobile-menu">
+<div class="px-container-padding mb-stack-lg flex items-center justify-between">
+<div>
+<h1 class="text-headline-sm font-headline-md font-bold text-primary dark:text-primary-fixed">AgenticFlow</h1>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">AI Orchestrator</p>
+</div>
+<button class="md:hidden text-on-surface-variant p-2" id="close-menu-btn">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="px-container-padding mb-stack-lg">
+<button class="w-full bg-primary-container text-on-primary font-label-md text-label-md py-2 px-4 rounded-DEFAULT flex items-center justify-center gap-2 hover:bg-primary transition-colors">
+<span class="material-symbols-outlined">add</span>
+                New Workflow
+            </button>
+</div>
+<div class="flex-1 overflow-y-auto px-4 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+                Dashboard
+            </a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT" href="#">
+<span class="material-symbols-outlined">account_tree</span>
+                Workspace
+            </a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT" href="#">
+<span class="material-symbols-outlined">assignment</span>
+                Task Center
+            </a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT" href="#">
+<span class="material-symbols-outlined">fact_check</span>
+                Task Detail
+            </a>
+<!-- Active State Navigation Item -->
+<a class="flex items-center gap-3 px-4 py-2 text-primary dark:text-primary-fixed font-bold border-r-4 border-primary dark:border-primary-fixed text-label-md font-label-md opacity-80 duration-150 bg-surface-container-low dark:bg-surface-variant rounded-l-DEFAULT" href="#">
+<span class="material-symbols-outlined">settings</span>
+                Settings
+            </a>
+</div>
+<div class="mt-auto px-4 pt-stack-md border-t border-outline-variant dark:border-outline flex flex-col gap-1">
+<button class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT text-left w-full">
+<span class="material-symbols-outlined">dark_mode</span>
+                Theme
+            </button>
+<button class="flex items-center gap-3 px-4 py-2 text-on-surface-variant dark:text-surface-variant text-label-md font-label-md hover:bg-surface-container-low dark:hover:bg-surface-variant transition-colors rounded-DEFAULT text-left w-full">
+<span class="material-symbols-outlined">account_circle</span>
+                Profile
+            </button>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col md:ml-[260px] min-h-screen">
+<!-- TopNavBar -->
+<header class="docked full-width top-0 sticky z-40 bg-surface dark:bg-background flex justify-between items-center h-16 px-container-padding" style="border-bottom: 1px solid transparent; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);">
+<div class="flex items-center gap-4">
+<button class="md:hidden text-on-surface-variant p-2 -ml-2" id="open-menu-btn">
+<span class="material-symbols-outlined">menu</span>
+</button>
+<div class="hidden md:flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary-fixed-dim text-[16px]" style="font-variation-settings: 'FILL' 1;">circle</span>
+<span class="text-secondary dark:text-secondary-fixed-dim font-bold font-label-sm text-label-sm">Healthy</span>
+</div>
+</div>
+<div class="flex items-center gap-stack-md">
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center overflow-hidden border border-outline-variant">
+<span class="material-symbols-outlined text-on-surface-variant">person</span>
+</div>
+</div>
+</header>
+<!-- Canvas -->
+<main class="flex-1 p-container-padding overflow-y-auto bg-[#F9FAFB]">
+<div class="max-w-4xl mx-auto">
+<div class="mb-stack-lg">
+<h2 class="text-headline-lg font-headline-lg text-on-background">设置</h2>
+<p class="text-body-md font-body-md text-on-surface-variant mt-2">管理全局配置和运行参数</p>
+</div>
+<div class="grid grid-cols-1 gap-stack-lg">
+<!-- Section 1: 模型设置 (Model Settings) -->
+<section class="bg-[#FFFFFF] border border-[#E5E7EB] rounded-lg overflow-hidden">
+<div class="bg-[#F9FAFB] px-6 py-4 border-b border-[#E5E7EB] flex items-center gap-3">
+<span class="material-symbols-outlined text-primary-container">smart_toy</span>
+<h3 class="text-headline-sm font-headline-sm text-on-background">模型设置</h3>
+</div>
+<div class="p-6 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-stack-md">
+<div class="space-y-2">
+<label class="block text-label-md font-label-md text-on-surface">选择模型</label>
+<div class="relative">
+<select class="w-full appearance-none bg-surface-container-lowest border border-[#E5E7EB] text-body-md font-body-md text-on-surface rounded-DEFAULT px-4 py-2 focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all">
+<option value="gpt-4o">GPT-4o (OpenAI)</option>
+<option value="claude-3-opus">Claude 3 Opus (Anthropic)</option>
+<option value="gemini-1.5-pro">Gemini 1.5 Pro (Google)</option>
+<option value="custom">Custom Model</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm">expand_more</span>
+</div>
+</div>
+</div>
+<div class="space-y-2">
+<label class="block text-label-md font-label-md text-on-surface">Base URL</label>
+<input class="w-full bg-surface-container-lowest border border-[#E5E7EB] text-body-md font-body-md text-on-surface rounded-DEFAULT px-4 py-2 focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all placeholder:text-outline-variant" placeholder="输入 API Base URL" type="text" value="https://api.openai.com/v1"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="block text-label-md font-label-md text-on-surface flex justify-between">
+<span>API Key</span>
+<button class="text-primary-container hover:text-primary text-label-sm font-label-sm transition-colors flex items-center gap-1" id="toggle-api-visibility" type="button">
+<span class="material-symbols-outlined text-[14px]">visibility</span>
+                                        显示
+                                    </button>
+</label>
+<input class="w-full bg-surface-container-lowest border border-[#E5E7EB] text-body-md font-body-md text-on-surface rounded-DEFAULT px-4 py-2 focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all font-mono" id="api-key-input" type="password" value="sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"/>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">此密钥将用于所有的模型推理请求。</p>
+</div>
+</div>
+</section>
+<!-- Section 2: 浏览器设置 (Browser Settings) -->
+<section class="bg-[#FFFFFF] border border-[#E5E7EB] rounded-lg overflow-hidden">
+<div class="bg-[#F9FAFB] px-6 py-4 border-b border-[#E5E7EB] flex items-center gap-3">
+<span class="material-symbols-outlined text-primary-container">web</span>
+<h3 class="text-headline-sm font-headline-sm text-on-background">浏览器设置</h3>
+</div>
+<div class="p-6 space-y-6">
+<div class="flex items-center justify-between border-b border-[#E5E7EB] pb-6">
+<div>
+<h4 class="text-body-lg font-body-lg text-on-surface">无头模式 (Headless)</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">在后台运行浏览器，不显示图形界面。开启以提升运行效率。</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-container-highest peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-container/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+<div class="flex items-center justify-between">
+<div>
+<h4 class="text-body-lg font-body-lg text-on-surface">会话管理</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">清除当前浏览器上下文、Cookie 和缓存数据。</p>
+</div>
+<button class="bg-surface-container-lowest border border-[#E5E7EB] text-on-surface text-label-md font-label-md px-4 py-2 rounded-DEFAULT hover:bg-surface-container-low transition-colors flex items-center gap-2" type="button">
+<span class="material-symbols-outlined text-[18px]">delete_sweep</span>
+                                    清除会话数据
+                                </button>
+</div>
+</div>
+</section>
+<!-- Section 3: 运行设置 (Runtime Settings) -->
+<section class="bg-[#FFFFFF] border border-[#E5E7EB] rounded-lg overflow-hidden">
+<div class="bg-[#F9FAFB] px-6 py-4 border-b border-[#E5E7EB] flex items-center gap-3">
+<span class="material-symbols-outlined text-primary-container">speed</span>
+<h3 class="text-headline-sm font-headline-sm text-on-background">运行设置</h3>
+</div>
+<div class="p-6 space-y-6">
+<div class="space-y-3 border-b border-[#E5E7EB] pb-6">
+<label class="block text-label-md font-label-md text-on-surface">执行模式</label>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+<label class="cursor-pointer">
+<input checked="" class="peer sr-only" name="run_mode" type="radio" value="yolo"/>
+<div class="border border-[#E5E7EB] rounded-lg p-4 bg-surface-container-lowest peer-checked:border-primary-container peer-checked:bg-primary-container/5 transition-all flex gap-3 h-full">
+<div class="mt-0.5">
+<div class="w-4 h-4 rounded-full border-2 border-primary-container flex items-center justify-center peer-checked:after:block after:hidden after:w-2 after:h-2 after:bg-primary-container after:rounded-full bg-white"></div>
+</div>
+<div>
+<h4 class="text-body-md font-body-md font-semibold text-on-surface">YOLO 模式</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">完全自动执行，无需人工干预确认每个步骤。</p>
+</div>
+</div>
+</label>
+<label class="cursor-pointer">
+<input class="peer sr-only" name="run_mode" type="radio" value="semi"/>
+<div class="border border-[#E5E7EB] rounded-lg p-4 bg-surface-container-lowest peer-checked:border-primary-container peer-checked:bg-primary-container/5 transition-all flex gap-3 h-full">
+<div class="mt-0.5">
+<div class="w-4 h-4 rounded-full border-2 border-outline-variant flex items-center justify-center peer-checked:border-primary-container peer-checked:after:block after:hidden after:w-2 after:h-2 after:bg-primary-container after:rounded-full bg-white"></div>
+</div>
+<div>
+<h4 class="text-body-md font-body-md font-semibold text-on-surface">半自动模式</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">在关键操作（如提交表单、点击敏感按钮）前请求人工确认。</p>
+</div>
+</div>
+</label>
+</div>
+</div>
+<div class="flex items-center justify-between border-b border-[#E5E7EB] pb-6">
+<div class="w-1/2 pr-4">
+<h4 class="text-body-lg font-body-lg text-on-surface">最大重试次数</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">节点执行失败后的自动重试次数上限。</p>
+</div>
+<div class="w-32">
+<input class="w-full bg-surface-container-lowest border border-[#E5E7EB] text-body-md font-body-md text-on-surface rounded-DEFAULT px-4 py-2 focus:outline-none focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all text-center" max="10" min="0" type="number" value="3"/>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<div>
+<h4 class="text-body-lg font-body-lg text-on-surface">状态检查点 (Checkpoints)</h4>
+<p class="text-body-sm font-body-sm text-on-surface-variant mt-1">保存每个成功节点的页面快照和DOM状态，以便调试或恢复。</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-container-highest peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-container/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+</label>
+</div>
+</div>
+</section>
+<!-- Save Action -->
+<div class="flex justify-end pt-4 pb-12">
+<button class="bg-surface-container-lowest border border-[#E5E7EB] text-on-surface text-label-md font-label-md px-6 py-2.5 rounded-DEFAULT hover:bg-surface-container-low transition-colors mr-3" type="button">
+                            取消
+                        </button>
+<button class="bg-[#4F46E5] text-white text-label-md font-label-md px-6 py-2.5 rounded-DEFAULT hover:bg-opacity-90 transition-all shadow-sm flex items-center gap-2" type="button">
+<span class="material-symbols-outlined text-[18px]">save</span>
+                            保存更改
+                        </button>
+</div>
+</div>
+</div>
+</main>
+</div>
+<script>
+        // Mobile Menu Toggle
+        const openMenuBtn = document.getElementById('open-menu-btn');
+        const closeMenuBtn = document.getElementById('close-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        if(openMenuBtn && closeMenuBtn && mobileMenu) {
+            openMenuBtn.addEventListener('click', () => {
+                mobileMenu.classList.remove('-translate-x-full');
+            });
+            closeMenuBtn.addEventListener('click', () => {
+                mobileMenu.classList.add('-translate-x-full');
+            });
+        }
+
+        // Toggle API Key Visibility
+        const toggleApiBtn = document.getElementById('toggle-api-visibility');
+        const apiKeyInput = document.getElementById('api-key-input');
+
+        if(toggleApiBtn && apiKeyInput) {
+            toggleApiBtn.addEventListener('click', () => {
+                if (apiKeyInput.type === 'password') {
+                    apiKeyInput.type = 'text';
+                    toggleApiBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">visibility_off</span> 隐藏';
+                } else {
+                    apiKeyInput.type = 'password';
+                    toggleApiBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">visibility</span> 显示';
+                }
+            });
+        }
+
+        // Custom Radio button logic for visual styling
+        const radioInputs = document.querySelectorAll('input[name="run_mode"]');
+        radioInputs.forEach(input => {
+            input.addEventListener('change', (e) => {
+                // Reset all radio visual states
+                document.querySelectorAll('input[name="run_mode"]').forEach(r => {
+                    const circle = r.nextElementSibling.querySelector('.rounded-full');
+                    circle.classList.remove('border-primary-container');
+                    circle.classList.add('border-outline-variant');
+                });
+
+                // Set active radio visual state
+                if(e.target.checked) {
+                    const activeCircle = e.target.nextElementSibling.querySelector('.rounded-full');
+                    activeCircle.classList.remove('border-outline-variant');
+                    activeCircle.classList.add('border-primary-container');
+                }
+            });
+        });
+    </script>
+</body></html>

@@ -21,7 +21,7 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from app.infra.redis import RedisClient
+from app.infra.redis import RedisClient, RedisKeys
 from app.schema.session import SessionDTO
 
 
@@ -35,7 +35,7 @@ class SessionCache:
 
     @staticmethod
     def _key(token: str) -> str:
-        return f"session:{token}"
+        return RedisKeys.session(token)
 
     @staticmethod
     def _serialize(session: SessionDTO) -> str:
@@ -66,7 +66,7 @@ class SessionCache:
         if raw is None:
             return None
         # decode_responses=False 时 Redis.get 返回 bytes,显式解码
-        # mypy: Redis.get 返回类型为 bytes | str,实际配置下一定是 bytes
+        # mypy: Redis.get 返回类型为 bytes | str,实际配置下一定是 bytes,因为 decode_responses=False 时返回 bytes
         return self._deserialize(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
 
     async def set(self, session: SessionDTO, ttl: int) -> None:

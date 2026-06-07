@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * 全局 CSS 变量 —— 从 DESIGN.md 镜像
+ *
+ * 浅色模式:与 DESIGN.md 配色完全一致
+ * 深色模式:在 :root.dark 下反转,符合 "深色模式优先" 需求
+ */
+@layer base {
+  :root {
+    --surface: #f8f9fa;
+    --surface-dim: #d9dadb;
+    --surface-bright: #f8f9fa;
+    --surface-container-lowest: #ffffff;
+    --surface-container-low: #f3f4f5;
+    --surface-container: #edeeef;
+    --surface-container-high: #e7e8e9;
+    --surface-container-highest: #e1e3e4;
+    --on-surface: #191c1d;
+    --on-surface-variant: #464555;
+    --inverse-surface: #2e3132;
+    --inverse-on-surface: #f0f1f2;
+    --outline: #777587;
+    --outline-variant: #c7c4d8;
+    --surface-tint: #4d44e3;
+    --primary: #3525cd;
+    --on-primary: #ffffff;
+    --primary-container: #4f46e5;
+    --on-primary-container: #dad7ff;
+    --inverse-primary: #c3c0ff;
+    --secondary: #006c49;
+    --on-secondary: #ffffff;
+    --secondary-container: #6cf8bb;
+    --on-secondary-container: #00714d;
+    --tertiary: #684000;
+    --on-tertiary: #ffffff;
+    --tertiary-container: #885500;
+    --error: #ba1a1a;
+    --on-error: #ffffff;
+    --error-container: #ffdad6;
+    --on-error-container: #93000a;
+    --background: #f8f9fa;
+    --on-background: #191c1d;
+    --surface-variant: #e1e3e4;
+  }
+
+  .dark {
+    --surface: #11141a;
+    --surface-dim: #0a0d12;
+    --surface-bright: #1a1e26;
+    --surface-container-lowest: #0a0d12;
+    --surface-container-low: #161a22;
+    --surface-container: #1a1e26;
+    --surface-container-high: #22262f;
+    --surface-container-highest: #2a2f3a;
+    --on-surface: #e2e3e6;
+    --on-surface-variant: #c7c4d8;
+    --inverse-surface: #e2e3e6;
+    --inverse-on-surface: #2e3132;
+    --outline: #928f9f;
+    --outline-variant: #464555;
+    --surface-tint: #c3c0ff;
+    --primary: #c3c0ff;
+    --on-primary: #1f0aa3;
+    --primary-container: #3323cc;
+    --on-primary-container: #e2dfff;
+    --inverse-primary: #4f46e5;
+    --secondary: #4edea3;
+    --on-secondary: #003822;
+    --secondary-container: #005236;
+    --on-secondary-container: #6ffbbe;
+    --tertiary: #ffb95f;
+    --on-tertiary: #482900;
+    --tertiary-container: #653e00;
+    --error: #ffb4ab;
+    --on-error: #690005;
+    --error-container: #93000a;
+    --on-error-container: #ffdad6;
+    --background: #0a0d12;
+    --on-background: #e2e3e6;
+    --surface-variant: #464555;
+  }
+
+  /* 全局基础样式 —— 与 DESIGN.md 排版规则一致 */
+  body {
+    background-color: var(--background);
+    color: var(--on-background);
+    font-family:
+      "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 等宽字体用于 ID、代码、Token 数等"开发者工具感"内容 */
+  code,
+  kbd,
+  pre,
+  .font-mono {
+    font-family:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
+
+@layer components {
+  /* 卡片 —— DESIGN.md 规定的 #FFFFFF + 1px #E5E7EB 边框 */
+  .card-base {
+    @apply rounded-lg border border-outline-variant bg-surface-container-lowest;
+  }
+
+  /* 等高数据列表 hover 高亮(zebra) */
+  .table-row-hover:hover {
+    @apply bg-surface-container-low;
+  }
+}

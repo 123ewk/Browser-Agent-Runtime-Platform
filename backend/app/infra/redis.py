@@ -145,6 +145,21 @@ class RedisClient:
         await self._client.connection_pool.aclose()
 
 
+class RedisKeys:
+    """集中管理 Redis key 命名空间 —— 所有模块统一通过此类构建 key。
+
+    为什么用静态方法而非枚举:
+    - key 模板含动态参数(token/user_id/task_id),枚举表达不了
+    - 静态方法可 grep 调用方,review 时一眼看出哪些模块用了 Redis
+
+    命名约定: {业务领域}:{标识符},冒号前缀方便 redis-cli KEYS 前缀扫描。
+    """
+
+    @staticmethod
+    def session(token: str) -> str:
+        return f"session:{token}"
+
+
 def create_redis_client() -> RedisClient:
     """工厂方法:从 settings 拼 URL + 建池 + 创 client,返回 RedisClient。
 

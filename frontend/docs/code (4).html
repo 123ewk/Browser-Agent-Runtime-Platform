@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+
+<html class="light" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>仪表盘 - AgenticFlow</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 24px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+            -webkit-font-feature-settings: 'liga';
+            -webkit-font-smoothing: antialiased;
+        }
+        /* Zebra striping for table as per style guide */
+        .zebra-table tbody tr:hover {
+            background-color: #f3f4f5; /* surface-container-low */
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface": "#f8f9fa",
+                        "surface-dim": "#d9dadb",
+                        "primary-container": "#4f46e5",
+                        "error-container": "#ffdad6",
+                        "secondary": "#006c49",
+                        "on-error-container": "#93000a",
+                        "surface-container-highest": "#e1e3e4",
+                        "surface-tint": "#4d44e3",
+                        "on-primary-fixed-variant": "#3323cc",
+                        "on-secondary": "#ffffff",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-fixed-variant": "#653e00",
+                        "inverse-surface": "#2e3132",
+                        "primary-fixed": "#e2dfff",
+                        "tertiary-container": "#885500",
+                        "primary": "#3525cd",
+                        "surface-container-low": "#f3f4f5",
+                        "secondary-fixed": "#6ffbbe",
+                        "surface-variant": "#e1e3e4",
+                        "surface-bright": "#f8f9fa",
+                        "inverse-primary": "#c3c0ff",
+                        "on-secondary-fixed-variant": "#005236",
+                        "surface-container-high": "#e7e8e9",
+                        "error": "#ba1a1a",
+                        "tertiary-fixed": "#ffddb8",
+                        "on-tertiary-fixed": "#2a1700",
+                        "on-secondary-container": "#00714d",
+                        "tertiary-fixed-dim": "#ffb95f",
+                        "on-tertiary-container": "#ffd4a4",
+                        "primary-fixed-dim": "#c3c0ff",
+                        "on-primary": "#ffffff",
+                        "on-surface": "#191c1d",
+                        "outline": "#777587",
+                        "secondary-fixed-dim": "#4edea3",
+                        "background": "#f8f9fa",
+                        "on-primary-fixed": "#0f0069",
+                        "outline-variant": "#c7c4d8",
+                        "on-tertiary": "#ffffff",
+                        "inverse-on-surface": "#f0f1f2",
+                        "tertiary": "#684000",
+                        "on-primary-container": "#dad7ff",
+                        "on-secondary-fixed": "#002113",
+                        "secondary-container": "#6cf8bb",
+                        "on-background": "#191c1d",
+                        "on-error": "#ffffff",
+                        "on-surface-variant": "#464555",
+                        "surface-container": "#edeeef"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "16px",
+                        "container-padding": "24px",
+                        "unit": "4px",
+                        "stack-sm": "8px",
+                        "stack-md": "16px",
+                        "stack-lg": "24px"
+                    },
+                    "fontFamily": {
+                        "headline-md": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-md": ["JetBrains Mono"],
+                        "label-sm": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "headline-sm": ["18px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "body-sm": ["12px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "headline-lg": ["30px", { "lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-md": ["13px", { "lineHeight": "16px", "fontWeight": "500" }],
+                        "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.02em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-surface text-on-surface font-body-md antialiased min-h-screen">
+<!-- SideNavBar from JSON -->
+<nav class="hidden md:flex bg-surface-container-lowest border-r border-outline-variant fixed h-full w-[260px] left-0 top-0 flex-col py-stack-lg z-50">
+<div class="px-4 mb-8 flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary-container text-on-primary flex items-center justify-center font-bold">A</div>
+<div>
+<h1 class="text-headline-sm font-headline-sm font-bold text-primary">AgenticFlow</h1>
+<p class="text-body-sm font-body-sm text-on-surface-variant">AI 编排器</p>
+</div>
+</div>
+<div class="px-4 mb-6">
+<button class="w-full bg-primary-container text-on-primary font-label-md text-label-md py-2 px-4 rounded-DEFAULT flex items-center justify-center gap-2 hover:bg-surface-tint transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                新建工作流
+            </button>
+</div>
+<div class="flex-1 overflow-y-auto">
+<!-- Navigation Links -->
+<a class="flex items-center gap-3 px-4 py-2 text-primary font-bold border-r-4 border-primary hover:bg-surface-container-low transition-colors opacity-80 duration-150 mb-1" href="#">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="text-label-md font-label-md">仪表盘</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors mb-1" href="#">
+<span class="material-symbols-outlined text-[20px]">account_tree</span>
+<span class="text-label-md font-label-md">工作空间</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors mb-1" href="#">
+<span class="material-symbols-outlined text-[20px]">assignment</span>
+<span class="text-label-md font-label-md">任务中心</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors mb-1" href="#">
+<span class="material-symbols-outlined text-[20px]">fact_check</span>
+<span class="text-label-md font-label-md">任务详情</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors mb-1" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="text-label-md font-label-md">设置</span>
+</a>
+</div>
+<div class="mt-auto px-4 border-t border-outline-variant pt-4 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">dark_mode</span>
+<span class="text-label-md font-label-md">主题</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:bg-surface-container-low transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">account_circle</span>
+<span class="text-label-md font-label-md">个人资料</span>
+</a>
+</div>
+</nav>
+<!-- TopNavBar from JSON -->
+<header class="hidden md:flex justify-between items-center h-16 px-container-padding ml-[260px] bg-surface border-b border-outline-variant docked full-width top-0 sticky z-40 transition-all duration-200 ease-in-out">
+<div class="flex items-center gap-6">
+<!-- Nav links from JSON -->
+<div class="text-secondary font-bold flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+<span class="text-label-md font-label-md">运行良好</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<!-- Search Bar on right -->
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+<input class="bg-surface-container-lowest border border-outline-variant text-body-sm font-body-sm rounded pl-9 pr-3 py-1.5 focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none w-64 transition-all" placeholder="搜索..." type="text"/>
+</div>
+<!-- Trailing Icons -->
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-surface-variant overflow-hidden border border-outline-variant">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A professional headshot of a person looking directly at the camera. The background is a clean, neutral, light-mode corporate setting. Lighting is bright, soft, and balanced, emphasizing approachability and modern enterprise aesthetics." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDbw-bJCI9C0j_FFWOYvB-XhkC4rgBAjvGzjXJ-zpZ6X-gu3Y1dQD_7lqllW_ZlMxDYBFbE6pSAbivR0EWJbnDBel9lYTvW6CrqtsEs0u5zw_VWiqanyszjVfp4fT_aETJX0y0rSLDohvXVWK0ngCU9vkGZUOvP7-uyjvHvU0Oxz1i2I8GiYvolBWVa4yGDcXH5v-2EwovXEK_-Lj2SrjoeHpqHaMc8a6n9EG_QyABCl8v-_7CakSPSm_S0Afkj3QSJhlKgd0ILJDM"/>
+</div>
+</div>
+</header>
+<!-- Main Workspace Canvas -->
+<main class="md:ml-[260px] p-container-padding">
+<div class="mb-8 flex justify-between items-end">
+<div>
+<h2 class="text-headline-lg font-headline-lg text-on-surface">概览</h2>
+<p class="text-body-md font-body-md text-on-surface-variant mt-1">监控代理性能和任务执行。</p>
+</div>
+<button class="bg-surface-container-lowest border border-outline-variant text-on-surface font-label-md text-label-md py-1.5 px-3 rounded flex items-center gap-2 hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-[18px]">date_range</span>
+                今日
+            </button>
+</div>
+<!-- Stats Grid -->
+<div class="grid grid-cols-1 md:grid-cols-5 gap-gutter mb-stack-lg">
+<!-- Card 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-stack-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<span class="text-label-md font-label-md text-on-surface-variant">今日任务</span>
+<span class="material-symbols-outlined text-outline text-[20px]">assignment</span>
+</div>
+<div class="flex items-end justify-between">
+<span class="text-headline-lg font-headline-lg">124</span>
+<span class="text-label-sm font-label-sm text-secondary flex items-center"><span class="material-symbols-outlined text-[14px]">arrow_upward</span> 12%</span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-stack-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<span class="text-label-md font-label-md text-on-surface-variant">运行中</span>
+<span class="material-symbols-outlined text-primary-container text-[20px]">autorenew</span>
+</div>
+<div class="flex items-end justify-between">
+<span class="text-headline-lg font-headline-lg text-primary-container">3</span>
+<span class="flex gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse mb-1.5"></span>
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse mb-1.5" style="animation-delay: 150ms"></span>
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse mb-1.5" style="animation-delay: 300ms"></span>
+</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-stack-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<span class="text-label-md font-label-md text-on-surface-variant">成功率</span>
+<span class="material-symbols-outlined text-secondary text-[20px]">check_circle</span>
+</div>
+<div class="flex items-end justify-between">
+<span class="text-headline-lg font-headline-lg">98.2%</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">平均 95%</span>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-stack-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<span class="text-label-md font-label-md text-on-surface-variant">今日 Tokens</span>
+<span class="material-symbols-outlined text-outline text-[20px]">memory</span>
+</div>
+<div class="flex items-end justify-between">
+<span class="text-headline-lg font-headline-lg">1.2M</span>
+<span class="text-label-sm font-label-sm text-error flex items-center"><span class="material-symbols-outlined text-[14px]">arrow_upward</span> 5%</span>
+</div>
+</div>
+<!-- Card 5 -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-stack-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-4">
+<span class="text-label-md font-label-md text-on-surface-variant">今日成本</span>
+<span class="material-symbols-outlined text-outline text-[20px]">payments</span>
+</div>
+<div class="flex items-end justify-between">
+<span class="text-headline-lg font-headline-lg">$14.50</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">预计 $450/月</span>
+</div>
+</div>
+</div>
+<!-- Recent Tasks Table -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
+<div class="bg-surface px-stack-md py-3 border-b border-outline-variant flex justify-between items-center">
+<h3 class="text-headline-sm font-headline-sm text-on-surface">最近任务</h3>
+<button class="text-primary font-label-md text-label-md hover:underline">查看全部</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse zebra-table">
+<thead>
+<tr class="bg-surface-container-low border-b border-outline-variant">
+<th class="px-stack-md py-2 text-label-md font-label-md text-on-surface-variant font-medium">目标</th>
+<th class="px-stack-md py-2 text-label-md font-label-md text-on-surface-variant font-medium">状态</th>
+<th class="px-stack-md py-2 text-label-md font-label-md text-on-surface-variant font-medium">创建时间</th>
+<th class="px-stack-md py-2 text-label-md font-label-md text-on-surface-variant font-medium text-right">成本</th>
+<th class="px-stack-md py-2 text-label-md font-label-md text-on-surface-variant font-medium w-12"></th>
+</tr>
+</thead>
+<tbody class="text-body-md font-body-md divide-y divide-outline-variant">
+<!-- Row 1 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="分析 Q3 财务报告并总结董事会演示的关键指标">分析 Q3 财务报告并总结关键指标...</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse"></span>
+                                    运行中
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">2 分钟前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">--</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="从前 5 大电商网站抓取竞争对手定价">从前 5 大电商网站抓取竞争对手定价</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                                    成功
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">15 分钟前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$0.45</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="为 A 级潜在客户起草个性化邮件序列">为 A 级潜在客户起草个性化邮件序列</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                                    成功
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">1 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$0.12</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="从源代码库生成 API 文档">从源代码库生成 API 文档</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                                    成功
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">2 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$1.20</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="在 CRM 和营销平台之间同步客户数据">在 CRM 和营销平台之间同步客户数据</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-error"></span>
+                                    失败
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">3 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$0.05</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 6 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="对传入的支持工单进行分类并路由到适当的队列">对传入的支持工单进行分类并路由到适当的...</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                                    成功
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">4 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$0.85</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 7 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="编译开发团队的每周性能摘要">编译开发团队的每周性能摘要</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                                    成功
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">5 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">$0.22</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+<!-- Row 8 -->
+<tr class="transition-colors">
+<td class="px-stack-md py-3 max-w-[300px] truncate" title="监控服务器日志以进行异常检测">监控服务器日志以进行异常检测</td>
+<td class="px-stack-md py-3">
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant text-label-sm font-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse"></span>
+                                    运行中
+                                </span>
+</td>
+<td class="px-stack-md py-3 text-on-surface-variant">6 小时前</td>
+<td class="px-stack-md py-3 text-right font-label-md text-label-md text-on-surface-variant">--</td>
+<td class="px-stack-md py-3 text-right">
+<button class="text-outline hover:text-on-surface"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+</body></html>
