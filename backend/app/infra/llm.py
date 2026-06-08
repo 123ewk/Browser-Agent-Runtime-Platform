@@ -1,7 +1,8 @@
 """
-LLM Provider —— 基于 langchain-openai ChatOpenAI 包装 MiMo。
+LLM Provider —— 基于 langchain-openai ChatOpenAI 的通用 OpenAI 兼容 Provider。
 
-MiMo 走 OpenAI 兼容协议,ChatOpenAI 通过 base_url 切换即可直接复用。
+支持 DeepSeek / MiMo / OpenAI 等走 OpenAI 兼容协议的模型,
+ChatOpenAI 通过 base_url 切换即可直接复用。
 
 为什么用 LangChain 全家桶 + LangSmith 而不是自建:
     详见 docs/tech_selection.md §2.1(2026-06-04 反转决策记录)。
@@ -65,7 +66,7 @@ class LLMChunk(BaseModel):
     设计要点(为什么这样):
     - content 是 delta(增量)而不是 cumulative(累计):LangChain ChatOpenAI.astream
       协议就是增量,业务层 `content += chunk.content` 拼接;若是累计会重复
-    - prompt_tokens / completion_tokens 仅 is_final=True 的块非 0:OpenAI / MiMo
+    - prompt_tokens / completion_tokens 仅 is_final=True 的块非 0:OpenAI 兼容协议
       协议只在末块附带 usage_metadata,中间块保持 0 避免误导
     - is_final 是显式终态:部分上游(异常路径)可能不发 finish_reason,1-chunk
       buffer + 末块强制 is_final=True 兜底(见 chat_stream 实现)
@@ -127,10 +128,11 @@ class StreamableLLMProvider(Protocol):
     ) -> AsyncGenerator[LLMChunk, None]: ...
 
 
-class MiMo:
-    """MiMo 大模型 Provider —— 基于 langchain-openai ChatOpenAI 包装。
+class ChatLLM:
+    """通用 OpenAI 兼容大模型 Provider —— 基于 langchain-openai ChatOpenAI 包装。
 
-    构造参数显式注入,settings 留到工厂方法 create_mimo_provider(),便于单测传 mock 值。
+    支持 DeepSeek / MiMo / OpenAI 等走 OpenAI 兼容协议的模型。
+    构造参数显式注入,settings 留到工厂方法 create_llm_provider(),便于单测传 mock 值。
     """
 
     def __init__(
@@ -145,7 +147,7 @@ class MiMo:
         self._default_model = default_model
         self._log = structlog.get_logger(__name__)
         # ChatOpenAI 内部统一处理:HTTP 客户端 / 重试 / LangSmith trace
-        # MiMo 走 OpenAI 兼容协议,base_url 一切即用,无需 monkey-patch
+        # OpenAI 兼容协议,base_url 一切即用,无需 monkey-patch
         # streaming 留默认 False;Phase 1 切 .astream() 时,业务侧显式调用,不污染本接口
         self._client = ChatOpenAI(
             model=default_model,
@@ -382,14 +384,14 @@ class MiMo:
         await self._client.root_async_client.close()
 
 
-def create_mimo_provider() -> MiMo:
-    """工厂方法:从 settings 读配置,创建 MiMo 实例。
+def create_llm_provider() -> ChatLLM:
+    """工厂方法:从 settings 读配置,创建 ChatLLM 实例。
 
-    不在模块级 `mimo = MiMo(...)` 的原因:
+    不在模块级 `llm = ChatLLM(...)` 的原因:
     1. 模块 import 时 settings 还未就绪(可能 .env 没就位),会污染冷启动
     2. service 层按需调用工厂,生命周期跟 FastAPI Depends 对齐,便于测试替换
     """
-    return MiMo(
+    return ChatLLM(
         api_key=settings.llm_api_key.get_secret_value(),
         base_url=settings.llm_base_url,
         default_model=settings.llm_default_model,

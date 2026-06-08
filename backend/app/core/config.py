@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
 
     # LLM
-    llm_provider: Literal["deepseek", "mimo", "openai", "mock"] = "mimo"
+    llm_provider: Literal["deepseek", "mimo", "openai", "mock"] = "deepseek"
     llm_api_key: SecretStr
-    llm_base_url: str = "https://api.xiaomimimo.com/v1"
-    llm_default_model: str = "MiMo-V2.5"
+    llm_base_url: str = "https://api.deepseek.com/v1"
+    llm_default_model: str = "deepseek-v4-flash"
     llm_timeout_seconds: int = 30
     llm_max_retries: int = 3
 

@@ -127,4 +127,10 @@ class BrowserManager:
                 data = json.load(f)
             return data.get("cookies", [])
         except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "browser_manager.load_storage_state_failed",
+                path=path,
+            )
             return []

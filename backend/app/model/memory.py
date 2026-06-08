@@ -4,7 +4,7 @@
 - 任务的语义检索依赖完整的 agent 执行链路,而 Phase 1 只做 HTTP CRUD
 - 先建表保证 migration 一次到位,避免后续加表时需要从零迁移(生产环境可能已经有用户数据)
 
-为什么用 Vector(1024): MiMo embedding 模型输出是 1024 维向量,固定维度让 pgvector 可以用 IVFFlat 索引加速检索。
+为什么用 Vector(1024): DeepSeek / MiMo 等 embedding 模型输出是 1024 维向量,固定维度让 pgvector 可以用 IVFFlat 索引加速检索。
 """
 
 from __future__ import annotations

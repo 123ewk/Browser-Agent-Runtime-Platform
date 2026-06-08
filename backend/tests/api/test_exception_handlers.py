@@ -46,9 +46,9 @@ def _mock_s3() -> Any:
 
 
 def _mock_llm() -> Any:
-    from app.infra.llm import MiMo
+    from app.infra.llm import ChatLLM
 
-    c = MagicMock(spec=MiMo)
+    c = MagicMock(spec=ChatLLM)
     c.aclose = AsyncMock()
     return c
 
@@ -56,7 +56,9 @@ def _mock_llm() -> Any:
 def _inject_deps(session: MagicMock) -> None:
     from app.core.state import InfraDeps
 
-    # get_session 的 finally 块 await session.close(),必须用 AsyncMock
+    # get_session 的 finally 块调用 commit/rollback/close,必须用 AsyncMock
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
     session.close = AsyncMock()
     app.state.deps = InfraDeps(
         pg=_mock_pg(session),

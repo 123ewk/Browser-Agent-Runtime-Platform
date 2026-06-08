@@ -9,12 +9,14 @@ V1 只做最简接口:
 from __future__ import annotations
 
 import asyncio
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
-from app.infra.llm import MiMo
+from app.core.deps import get_current_user_id
+from app.core.security import decode_token
+from app.infra.llm import ChatLLM
 from app.runtime.event_bus import EventBus
 from app.runtime.policy_engine import PolicyEngine
 from app.runtime.protocol.schemas import RuntimeEvent
@@ -37,7 +39,7 @@ _policy_engine: PolicyEngine | None = None
 _active_runners: dict[str, BrowserTaskRunner] = {}
 
 
-def init_policy_engine(llm_provider: MiMo) -> None:
+def init_policy_engine(llm_provider: ChatLLM) -> None:
     """初始化 PolicyEngine —— 在 FastAPI startup 后调用
 
     必须在 lifespan startup 完成后调用,因为需要 app.state.deps.llm。
@@ -65,7 +67,10 @@ def get_ws_manager() -> WebSocketManager:
 
 
 @router.post("")
-async def create_task(payload: TaskCreate) -> dict:
+async def create_task(
+    payload: TaskCreate,
+    user_id: UUID = Depends(get_current_user_id),
+) -> dict:
     """创建并启动一个浏览器任务
 
     Request: {"goal": "打开百度搜索Python"}
@@ -127,7 +132,10 @@ async def create_task(payload: TaskCreate) -> dict:
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str) -> dict:
+async def get_task(
+    task_id: str,
+    user_id: UUID = Depends(get_current_user_id),
+) -> dict:
     """查询任务状态"""
     state = _task_state_mgr.get_state(task_id)
     reason = _task_state_mgr.get_reason(task_id)
@@ -144,11 +152,22 @@ async def get_task(task_id: str) -> dict:
 
 
 @router.websocket("/{task_id}/ws")
-async def task_websocket(websocket: WebSocket, task_id: str) -> None:
+async def task_websocket(
+    websocket: WebSocket,
+    task_id: str,
+    token: str = Query(...),
+) -> None:
     """WebSocket 事件流 —— 前端 Timeline 的数据源
 
     客户端连接后持续接收 RuntimeEvent JSON,直到任务结束或连接断开。
+    认证通过 query param ?token=xxx 传递(浏览器 WebSocket 不支持自定义请求头)。
     """
+    # WS 层认证:验证 JWT token,失败关闭连接
+    if decode_token(token) is None:
+        await websocket.accept()
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
     await _ws_manager.connect(websocket, task_id=task_id)
 
     try:

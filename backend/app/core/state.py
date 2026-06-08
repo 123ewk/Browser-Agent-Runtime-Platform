@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.infra.llm import MiMo, create_mimo_provider
+from app.infra.llm import ChatLLM, create_llm_provider
 from app.infra.postgres import PostgresClient, create_postgres_client
 from app.infra.redis import RedisClient, create_redis_client
 from app.infra.s3 import S3Client, create_s3_client
@@ -31,7 +31,7 @@ class InfraDeps(BaseModel):
     pg: PostgresClient
     redis: RedisClient
     s3: S3Client
-    llm: MiMo
+    llm: ChatLLM
 
 
 async def create_deps() -> InfraDeps:
@@ -44,5 +44,5 @@ async def create_deps() -> InfraDeps:
     pg = create_postgres_client()
     redis = create_redis_client()
     s3 = create_s3_client()
-    llm = create_mimo_provider()
+    llm = create_llm_provider()
     return InfraDeps(pg=pg, redis=redis, s3=s3, llm=llm)

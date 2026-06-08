@@ -49,10 +49,10 @@ def _mock_s3(ok: bool = True) -> Any:
 
 
 def _mock_llm(content: str = "pong", raise_exc: bool = False) -> Any:
-    """构造 Mock MiMo LLM Provider。"""
-    from app.infra.llm import MiMo
+    """构造 Mock ChatLLM Provider。"""
+    from app.infra.llm import ChatLLM
 
-    client = MagicMock(spec=MiMo)
+    client = MagicMock(spec=ChatLLM)
     if raise_exc:
         client.chat = AsyncMock(side_effect=RuntimeError("llm down"))
     else:

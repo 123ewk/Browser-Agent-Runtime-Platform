@@ -1,6 +1,7 @@
 import type { RuntimeEvent } from "@/types/chat";
 import { buildWsUrl } from "./ws-url";
 import { createBackoffScheduler } from "./backoff";
+import { useAuthStore } from "@/lib/store/auth";
 
 /**
  * 订阅指定任务的实时事件流(RuntimeEvent)
@@ -22,7 +23,8 @@ export function subscribeTaskStream(
 
   const open = (): void => {
     if (closed) return;
-    const url = buildWsUrl(taskId);
+    const token = useAuthStore.getState().token ?? undefined;
+    const url = buildWsUrl(taskId, token);
     socket = new WebSocket(url);
     socket.onopen = () => {
       onConnect?.();

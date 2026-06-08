@@ -123,7 +123,9 @@ class WebSocketManager:
         """向一组连接广播事件,单个失败不影响其他"""
         stale: list[WebSocket] = []
 
-        for ws in connections:
+        # list() 快照避免并发修改:EventBus.publish 用 asyncio.gather
+        # 时两个 _on_event 可能交错修改同一 connections 列表
+        for ws in list(connections):
             try:
                 await ws.send_text(payload)
             except Exception:

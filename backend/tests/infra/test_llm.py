@@ -20,7 +20,7 @@ from typing import Any
 from langchain_core.messages import AIMessageChunk, UsageMetadata
 from langchain_openai import ChatOpenAI
 
-from app.infra.llm import LLMChunk, MiMo
+from app.infra.llm import ChatLLM, LLMChunk
 
 # ---------- 测试夹具 ----------
 
@@ -94,8 +94,8 @@ def _make_usage(input_tokens: int, output_tokens: int) -> UsageMetadata:
     }
 
 
-def _patch_bind(mimo: MiMo, binding: FakeBinding) -> None:
-    """把 mimo._client.bind 替换为返回 binding 的 lambda(并记录 bind 调用参数)。
+def _patch_bind(llm: ChatLLM, binding: FakeBinding) -> None:
+    """把 llm._client.bind 替换为返回 binding 的 lambda(并记录 bind 调用参数)。
 
     必须用 object.__setattr__:ChatOpenAI 是 Pydantic BaseModel,
     默认 __setattr__ 拦截 "非 pydantic 字段" 赋值(ValueError);
@@ -108,12 +108,12 @@ def _patch_bind(mimo: MiMo, binding: FakeBinding) -> None:
         binding.received_bind_kwargs = kwargs
         return binding
 
-    object.__setattr__(mimo._client, "bind", fake_bind)
+    object.__setattr__(llm._client, "bind", fake_bind)
 
 
-def _make_mimo() -> MiMo:
-    """MiMo 实例(参数走测试值,避免依赖 settings)。"""
-    return MiMo(
+def _make_llm() -> ChatLLM:
+    """ChatLLM 实例(参数走测试值,避免依赖 settings)。"""
+    return ChatLLM(
         api_key="test-key",
         base_url="http://test/v1",
         default_model="test-model",
@@ -128,7 +128,7 @@ def _make_mimo() -> MiMo:
 def test_chunk_to_dto_text_delta_is_passed_through() -> None:
     """content 为 str 时,直接透传(LLM 文本路径)。"""
     chunk = _make_chunk("hello")
-    dto = MiMo._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
+    dto = ChatLLM._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
     assert dto.content == "hello"
     assert dto.is_final is False
     assert dto.finish_reason is None
@@ -144,7 +144,7 @@ def test_chunk_to_dto_final_populates_usage_and_finish_reason() -> None:
         finish_reason="stop",
         usage={"input_tokens": 12, "output_tokens": 7},
     )
-    dto = MiMo._chunk_to_dto(
+    dto = ChatLLM._chunk_to_dto(
         chunk,
         is_final=True,
         usage=_make_usage(12, 7),
@@ -159,7 +159,7 @@ def test_chunk_to_dto_final_populates_usage_and_finish_reason() -> None:
 def test_chunk_to_dto_finish_reason_suppressed_on_non_final() -> None:
     """非末块即便上游带了 finish_reason,业务层也只关心"最终结束原因",中间块一律 None。"""
     chunk = _make_chunk("mid", finish_reason="stop")  # 异常:中间块带 finish_reason
-    dto = MiMo._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
+    dto = ChatLLM._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
     assert dto.finish_reason is None  # 被压制
 
 
@@ -172,7 +172,7 @@ def test_chunk_to_dto_multimodal_extracts_text_only() -> None:
             {"type": "text", "text": "这张图"},
         ],
     )
-    dto = MiMo._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
+    dto = ChatLLM._chunk_to_dto(chunk, is_final=False, usage=None, model="m")
     assert dto.content == "你看这张图"
 
 
@@ -181,7 +181,7 @@ def test_chunk_to_dto_multimodal_extracts_text_only() -> None:
 
 async def test_chat_stream_accumulates_content() -> None:
     """4 个 token 拼接后 == 完整响应。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(
         chunks=[
             _make_chunk("你"),
@@ -195,10 +195,10 @@ async def test_chat_stream_accumulates_content() -> None:
             ),
         ],
     )
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
     received: list[LLMChunk] = []
-    async for chunk in mimo.chat_stream([{"role": "user", "content": "hi"}]):
+    async for chunk in llm.chat_stream([{"role": "user", "content": "hi"}]):
         received.append(chunk)
 
     # 5 个输入 → 5 个 yield(前 4 个 is_final=False,末 1 个 is_final=True)
@@ -209,7 +209,7 @@ async def test_chat_stream_accumulates_content() -> None:
 
 async def test_chat_stream_marks_exactly_one_final() -> None:
     """无论上游 yield 多少块,业务层只能看到恰好 1 个 is_final=True。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(
         chunks=[
             _make_chunk("a"),
@@ -217,10 +217,10 @@ async def test_chat_stream_marks_exactly_one_final() -> None:
             _make_chunk("c", finish_reason="stop", usage={"input_tokens": 1, "output_tokens": 3}),
         ],
     )
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
     received: list[LLMChunk] = []
-    async for chunk in mimo.chat_stream([{"role": "user", "content": "x"}]):
+    async for chunk in llm.chat_stream([{"role": "user", "content": "x"}]):
         received.append(chunk)
 
     final_chunks = [c for c in received if c.is_final]
@@ -232,7 +232,7 @@ async def test_chat_stream_marks_exactly_one_final() -> None:
 
 async def test_chat_stream_usage_only_on_final_chunk() -> None:
     """usage 仅在 is_final=True 的块非 0,中间块为 0(避免误导消费者算累计成本)。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(
         chunks=[
             _make_chunk("a"),
@@ -240,10 +240,10 @@ async def test_chat_stream_usage_only_on_final_chunk() -> None:
             _make_chunk("c", finish_reason="stop", usage={"input_tokens": 8, "output_tokens": 3}),
         ],
     )
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
     received: list[LLMChunk] = []
-    async for chunk in mimo.chat_stream([{"role": "user", "content": "x"}]):
+    async for chunk in llm.chat_stream([{"role": "user", "content": "x"}]):
         received.append(chunk)
 
     non_finals = [c for c in received if not c.is_final]
@@ -257,7 +257,7 @@ async def test_chat_stream_usage_only_on_final_chunk() -> None:
 
 async def test_chat_stream_safety_net_when_no_finish_reason() -> None:
     """兜底:上游全程不发 finish_reason,1-chunk buffer 仍要 mark 最后一块 is_final=True。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(
         chunks=[
             _make_chunk("a"),
@@ -265,10 +265,10 @@ async def test_chat_stream_safety_net_when_no_finish_reason() -> None:
             _make_chunk("c"),  # 没 finish_reason 也没 usage
         ],
     )
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
     received: list[LLMChunk] = []
-    async for chunk in mimo.chat_stream([{"role": "user", "content": "x"}]):
+    async for chunk in llm.chat_stream([{"role": "user", "content": "x"}]):
         received.append(chunk)
 
     # 即便上游没给 finish_reason,末块仍要被识别为 is_final
@@ -284,14 +284,14 @@ async def test_chat_stream_passes_per_call_kwargs() -> None:
     """temperature / max_tokens / timeout 必须透传到 .bind()(per-call 覆盖)。
 
     实现细节:chat_stream 用 .bind(**bind_kwargs).astream(messages) 而不是
-    astream(messages, **kwargs) — 见 MiMo.chat_stream 内注释(mypy 重载规避)。
+    astream(messages, **kwargs) — 见 ChatLLM.chat_stream 内注释(mypy 重载规避)。
     所以验证点放在 FakeBinding.received_bind_kwargs,而不是 received_kwargs。
     """
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(chunks=[_make_chunk("x", finish_reason="stop")])
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
-    async for _ in mimo.chat_stream(
+    async for _ in llm.chat_stream(
         [{"role": "user", "content": "x"}],
         temperature=0.3,
         max_tokens=512,
@@ -309,11 +309,11 @@ async def test_chat_stream_passes_per_call_kwargs() -> None:
 
 async def test_chat_stream_max_tokens_zero_not_swallowed() -> None:
     """max_tokens=0 显式传(OpenAI 协议 0 = 不限制),不能被默认 3000 吞掉。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(chunks=[_make_chunk("x", finish_reason="stop")])
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
-    async for _ in mimo.chat_stream(
+    async for _ in llm.chat_stream(
         [{"role": "user", "content": "x"}],
         max_tokens=0,
     ):
@@ -329,11 +329,11 @@ async def test_chat_stream_timeout_none_not_passed() -> None:
     "per-call 覆盖"路径,与 chat() 行为一致。
     验证点在 received_bind_kwargs:chat_stream 用 .bind() 而非 astream() 传 per-call。
     """
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(chunks=[_make_chunk("x", finish_reason="stop")])
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
-    async for _ in mimo.chat_stream(
+    async for _ in llm.chat_stream(
         [{"role": "user", "content": "x"}],
         timeout=None,  # 显式 None
     ):
@@ -345,15 +345,15 @@ async def test_chat_stream_timeout_none_not_passed() -> None:
 async def test_chat_stream_aclose_after_early_break() -> None:
     """消费者中途 break,async generator 显式 aclose 不应抛(streaming 路径清理)。
 
-    不在本测试里调 mimo.aclose():那是 pre-existing 路径(基线就有),
+    不在本测试里调 llm.aclose():那是 pre-existing 路径(基线就有),
     跟 streaming 改造无关,本测试只关心 streaming 自己的清理语义。
     """
-    mimo = _make_mimo()
+    llm = _make_llm()
     binding = FakeBinding(chunks=[_make_chunk("only")])
-    _patch_bind(mimo, binding)
+    _patch_bind(llm, binding)
 
     # 拿 async iter 出来后立刻 break(模拟用户取消)
-    agen = mimo.chat_stream([{"role": "user", "content": "x"}])
+    agen = llm.chat_stream([{"role": "user", "content": "x"}])
     async for _ in agen:
         break
     # 显式关掉 async generator,触发 finally/aclose — 不应抛
@@ -365,7 +365,7 @@ async def test_chat_stream_aclose_after_early_break() -> None:
 
 async def test_existing_chat_still_returns_llm_response() -> None:
     """回归保护:chat() 必须仍走 ainvoke 路径,返回 LLMResponse(非 AsyncIterator)。"""
-    mimo = _make_mimo()
+    llm = _make_llm()
     # chat() 路径:patch 掉 ainvoke,验证它被调用(而不是 astream)
     from langchain_core.messages import AIMessage
 
@@ -378,9 +378,9 @@ async def test_existing_chat_still_returns_llm_response() -> None:
     async def fake_ainvoke(*args: Any, **kwargs: Any) -> AIMessage:
         return fake_response
 
-    object.__setattr__(mimo._client, "ainvoke", fake_ainvoke)
+    object.__setattr__(llm._client, "ainvoke", fake_ainvoke)
 
-    response = await mimo.chat([{"role": "user", "content": "x"}])
+    response = await llm.chat([{"role": "user", "content": "x"}])
     assert response.content == "hi"
     assert response.prompt_tokens == 1
     assert response.completion_tokens == 1
@@ -390,12 +390,12 @@ async def test_existing_chat_still_returns_llm_response() -> None:
 # ---------- 类型契约 ----------
 
 
-def test_mimo_satisfies_streamable_protocol() -> None:
-    """类型契约:MiMo 实例必须同时满足 LLMProvider 和 StreamableLLMProvider。"""
-    mimo = _make_mimo()
+def test_llm_satisfies_streamable_protocol() -> None:
+    """类型契约:ChatLLM 实例必须同时满足 LLMProvider 和 StreamableLLMProvider。"""
+    llm = _make_llm()
     # 检查两个方法存在(不是严格的 Protocol 运行时检查,够用)
-    assert hasattr(mimo, "chat")
-    assert hasattr(mimo, "chat_stream")
-    assert hasattr(mimo, "aclose")
+    assert hasattr(llm, "chat")
+    assert hasattr(llm, "chat_stream")
+    assert hasattr(llm, "aclose")
     # ainvoke 路径仍可用(chat() 依赖)
-    assert isinstance(mimo._client, ChatOpenAI)
+    assert isinstance(llm._client, ChatOpenAI)

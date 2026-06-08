@@ -367,7 +367,21 @@ class BrowserTaskRunner:
             if event.event == EventType.TASK_FINISHED:
                 await self._event_bus.publish(event)
                 # 异步触发 cleanup(不阻塞当前协程)
-                asyncio.ensure_future(self._on_task_finished(event))
+                # 保存 task 引用,注册 done_callback 防止异常静默丢失
+                cleanup_task = asyncio.ensure_future(self._on_task_finished(event))
+
+                def _log_cleanup_error(t: asyncio.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc:
+                        logger.error(
+                            "worker.cleanup_error",
+                            task_id=self._task_id,
+                            exc_info=exc,
+                        )
+
+                cleanup_task.add_done_callback(_log_cleanup_error)
                 return
 
             await self._event_bus.publish(event)

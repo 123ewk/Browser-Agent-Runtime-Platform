@@ -46,9 +46,9 @@ def _mock_s3() -> Any:
 
 
 def _mock_llm() -> Any:
-    from app.infra.llm import MiMo
+    from app.infra.llm import ChatLLM
 
-    client = MagicMock(spec=MiMo)
+    client = MagicMock(spec=ChatLLM)
     client.aclose = AsyncMock()
     return client
 
@@ -58,6 +58,8 @@ def _new_mock_session() -> tuple[MagicMock, MagicMock]:
     ses = MagicMock()
     ses.add = MagicMock()
     ses.flush = AsyncMock()
+    ses.commit = AsyncMock()
+    ses.rollback = AsyncMock()
     ses.execute = AsyncMock()
     ses.get = AsyncMock()
     ses.close = AsyncMock()

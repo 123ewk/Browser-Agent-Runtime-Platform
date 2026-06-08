@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import quote
 
 import structlog
 
@@ -105,9 +106,9 @@ class PolicyEngine:
             else "(empty - this is the first step)"
         )
 
-        prompt = _SYSTEM_PROMPT.format(
-            goal=goal,
-            trajectory_summary=traj_summary,
+        # 用 str.replace 而非 .format(),避免 goal 中包含 { 或 } 时触发 KeyError
+        prompt = _SYSTEM_PROMPT.replace("{goal}", goal).replace(
+            "{trajectory_summary}", traj_summary
         )
         messages = [
             {"role": "system", "content": prompt},
@@ -210,7 +211,7 @@ class PolicyEngine:
             skill="browser",
             action=ActionDetail(
                 type="navigate",
-                target=f"https://www.bing.com/search?q={goal}",
+                target=f"https://www.bing.com/search?q={quote(goal)}",
                 description=f"Search for: {goal}",
             ),
             reasoning="Fallback: Bing search",

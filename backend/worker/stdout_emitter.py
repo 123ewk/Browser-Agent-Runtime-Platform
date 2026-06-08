@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import sys
 
+import structlog
+
 from app.runtime.protocol.schemas import RuntimeEvent
+
+logger = structlog.get_logger(__name__)
 
 
 def emit_event(event: RuntimeEvent) -> None:
@@ -25,9 +29,8 @@ def emit_event(event: RuntimeEvent) -> None:
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
     except Exception:
-        # 序列化失败不应该让 Worker 崩溃,写一条错误到 stderr
-        print(
-            f"[stdout_emitter] 事件序列化失败: event_id={event.event_id}",
-            file=sys.stderr,
-            flush=True,
+        # 序列化失败不应该让 Worker 崩溃,记录到 stderr
+        logger.warning(
+            "stdout_emitter.serialize_failed",
+            event_id=event.event_id,
         )

@@ -32,14 +32,23 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
-    """每次请求分配独立 AsyncSession,请求结束自动关闭。
+    """每次请求分配独立 AsyncSession,请求结束自动提交并关闭。
 
     为什么用 yield 而非 context manager: FastAPI Depends 的
     generator 模式在响应返回后执行 finally,保证连接不泄漏。
+
+    为什么 finally 里先 commit 再 close:
+    flush 只是把 SQL 发到数据库(仍在事务内),不 commit 的话
+    close 会触发隐式 rollback,数据就丢了。注册"成功"但查不到
+    用户就是这个问题。
     """
     session: AsyncSession = request.app.state.deps.pg.session()
     try:
         yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
     finally:
         await session.close()
 
