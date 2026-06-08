@@ -3,7 +3,7 @@ import { PlaceholderShell } from "@/components/shared";
 export const dynamic = "force-dynamic";
 
 export default function TaskDetailPage({
-  params,
+  params: _params,
 }: {
   readonly params: Promise<{ id: string }>;
 }) {

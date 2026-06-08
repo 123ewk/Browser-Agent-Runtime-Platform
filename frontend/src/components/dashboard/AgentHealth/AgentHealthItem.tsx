@@ -1,16 +1,10 @@
 import { cn } from "@/lib/cn";
-import { HealthIndicator, type HealthStatus } from "@/components/shared/TopBar";
+import { HealthIndicator } from "@/components/shared/TopBar";
 import { formatRelativeTime } from "@/lib/format/time";
 import type { Agent } from "@/types/agent";
 
 /** 单个 Agent 健康条目 —— 左侧 8px 状态条 + 名称 + 指标 */
 export function AgentHealthItem({ agent }: { readonly agent: Agent }) {
-  const healthCn: Record<HealthStatus, string> = {
-    healthy: "运行良好",
-    degraded: "性能下降",
-    down: "已宕机",
-  };
-
   return (
     <div className="flex items-center gap-4 border-b border-outline-variant/60 py-3 last:border-b-0">
       <span

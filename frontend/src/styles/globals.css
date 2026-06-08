@@ -115,4 +115,10 @@
   .table-row-hover:hover {
     @apply bg-surface-container-low;
   }
+
+  /* Material Symbols Outlined —— 字体变量默认值,组件内可覆盖 FILL/wght */
+  .material-symbols-outlined {
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+    user-select: none;
+  }
 }

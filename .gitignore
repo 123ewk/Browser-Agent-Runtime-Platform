@@ -11,6 +11,11 @@
 AGENTS.md
 docs/AI协作式*.md
 
+# --- 设计稿 / 文档产物(非源码) ---
+frontend/docs/*.zip
+frontend/docs/*.html
+frontend/docs/*.png
+
 # --- AI 助手配置(个人学习用,非项目源码) ---
 .claude/
 CLAUDE.md

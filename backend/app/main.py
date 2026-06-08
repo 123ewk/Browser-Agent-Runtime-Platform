@@ -29,3 +29,8 @@ app = FastAPI(
 # 装配路由
 app.include_router(health_router)
 app.include_router(auth_router)
+
+if __name__ == "__main__":
+    import uvicorn  # type: ignore[import-not-found]
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

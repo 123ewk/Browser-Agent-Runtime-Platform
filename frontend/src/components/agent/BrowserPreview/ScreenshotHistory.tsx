@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type { ScreenshotRef } from "@/types/task";
 
 interface ScreenshotHistoryProps {
@@ -24,11 +25,13 @@ export function ScreenshotHistory({
           <span className="text-xs text-on-surface-variant">无历史截图</span>
         ) : (
           shown.map((s) => (
-            <img
+            <Image
               key={s.id}
               src={s.url}
               alt={s.pageUrl}
               className="h-12 w-16 shrink-0 rounded-sm border border-outline-variant object-cover"
+              width={64}
+              height={48}
             />
           ))
         )}

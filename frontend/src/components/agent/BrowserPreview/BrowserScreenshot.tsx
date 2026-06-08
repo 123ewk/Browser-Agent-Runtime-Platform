@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { ImageOff } from "lucide-react";
 import type { ScreenshotRef } from "@/types/task";
 
@@ -17,10 +18,11 @@ export function BrowserScreenshot({
   return (
     <div className="relative flex-1 overflow-hidden bg-surface-container">
       {screenshot ? (
-        <img
+        <Image
           src={screenshot.url}
           alt={`browser preview ${screenshot.pageUrl}`}
-          className="h-full w-full object-contain"
+          className="object-contain"
+          fill
         />
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-variant">
