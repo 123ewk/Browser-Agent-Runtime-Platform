@@ -81,6 +81,22 @@ def _shared_processors() -> list[Processor]:
     ]
 
 
+def _sanitize_encoding(_: Any, __: str, event_dict: EventDict) -> EventDict:
+    """Windows GBK 控制台编码安全:将无法编码的字符替换为 ? 避免日志崩溃。
+
+    这只是渲染层的兜底,不影响 JSON 协议(协议层永远是 UTF-8)。
+    """
+    for key, value in event_dict.items():
+        if isinstance(value, str):
+            try:
+                value.encode(sys.stdout.encoding or "utf-8")
+            except UnicodeEncodeError:
+                event_dict[key] = value.encode(
+                    sys.stdout.encoding or "utf-8", errors="replace"
+                ).decode(sys.stdout.encoding or "utf-8", errors="replace")
+    return event_dict
+
+
 def configure_logging() -> None:
     """初始化全局日志。幂等:重复调用以最后一次配置为准。"""
     level = getattr(logging, settings.log_level)  # getattr() 获取日志级别,如 logging.INFO
@@ -92,14 +108,20 @@ def configure_logging() -> None:
     )  # force=True 确保配置生效
 
     # 2) 选择渲染器:dev 彩色可读,prod JSON 给日志系统(Loki/ELK)消费
+    # Windows GBK 控制台不能直接打印中文,加 _sanitize_encoding 兜底
     renderer: Processor = (
         structlog.dev.ConsoleRenderer(colors=is_dev)  # dev 彩色可读
         if is_dev
         else structlog.processors.JSONRenderer()  # prod JSON 给日志系统(Loki/ELK)消费
     )
+    processors = _shared_processors()
+    if is_dev and sys.platform == "win32":
+        # Windows GBK 控制台编码安全:在 renderer 之前替换无法编码的字符
+        processors.append(_sanitize_encoding)
+    processors.append(renderer)
 
     structlog.configure(
-        processors=[*_shared_processors(), renderer],
+        processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(
             level
         ),  # 过滤日志级别,只打印 >= level 的日志

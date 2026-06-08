@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Inter, JetBrains_Mono, Material_Symbols_Outlined } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "@/styles/globals.css";
 import { Providers } from "./providers";
 import { cn } from "@/lib/cn";
@@ -9,10 +9,11 @@ import { cn } from "@/lib/cn";
  * 根布局 —— 注入全局 Provider + 字体
  *
  * 字体加载策略(Next.js 14+ App Router 最佳实践):
- * - 使用 next/font/google 而非 <link href="...">
- *   原因:next/font 会自动 self-host 字体、preload、自动避免 CLS
- * - 通过 className 把字体挂到 <html> 上,CSS 变量(--font-*) 给子组件用
- * - 三个字体:Inter(正文) + JetBrains Mono(代码/标签) + Material Symbols(品牌图标)
+ * - 文本字体(Inter / JetBrains Mono)走 next/font/google:
+ *   自动 self-host、preload、避免 CLS,通过 CSS 变量(--font-*) 暴露给子组件
+ * - Material Symbols 是 icon font(变体字体),不走 next/font/google:
+ *   next/font 对 icon font 的 catalog 收录不全,Google 官方也是 <link> 加载,
+ *   icon font 本来也不需要 self-host / preload 优化
  */
 const inter = Inter({
   subsets: ["latin"],
@@ -25,13 +26,6 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500"],
   variable: "--font-jetbrains-mono",
-  display: "swap",
-});
-
-const materialSymbols = Material_Symbols_Outlined({
-  weight: ["400", "500"],
-  style: ["normal"],
-  variable: "--font-material-symbols",
   display: "swap",
 });
 
@@ -49,8 +43,18 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       suppressHydrationWarning
-      className={cn(inter.variable, jetbrainsMono.variable, materialSymbols.variable)}
+      className={cn(inter.variable, jetbrainsMono.variable)}
     >
+      <head>
+        {/*
+          Material Symbols Outlined —— 用 <link> 加载而非 next/font/google
+          原因见顶部"字体加载策略"注释
+        */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block"
+        />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>

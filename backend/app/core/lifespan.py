@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     deps = await create_deps()
     app.state.deps = deps
 
+    # 初始化 PolicyEngine (Phase 2.1: LLM 策略引擎)
+    from app.api.tasks import init_policy_engine
+
+    try:
+        init_policy_engine(deps.llm)
+        log.info("policy_engine.initialized")
+    except Exception:
+        log.warning("policy_engine.init_failed", exc_info=True)
+
     log.info("lifespan.startup.complete")
 
     yield

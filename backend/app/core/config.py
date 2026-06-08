@@ -10,6 +10,17 @@ class Settings(BaseSettings):
     environment: Literal["dev", "test", "prod"] = "dev"  # 环境,默认 dev
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
+    # CORS —— 允许跨域调用的前端 origin 列表。
+    # 用 JSON 字符串配置(逗号分隔多个),避免在 Pydantic 中再引一个 List[HttpUrl] 解析器。
+    # 只列通用本地端口(localhost / 127.0.0.1),不要在本字段放内网 IP,那样会随仓库泄露;
+    # 内网/外网域名应通过 .env 覆盖 CORS_ALLOW_ORIGINS。
+    cors_allow_origins: str = (
+        "http://localhost:3000,"
+        "http://localhost:5173,"  # Vite 默认
+        "http://127.0.0.1:3000,"
+        "http://127.0.0.1:5173"
+    )
+
     # Postgres
     postgres_host: str = "localhost"
     postgres_port: int = 5432

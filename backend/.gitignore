@@ -43,6 +43,10 @@ htmlcov/
 *.sqlite3
 *.db
 minio/data/
+# 浏览器 profile 缓存 + 截图(V1 本地存储)+ Worker stderr 日志
+# 这些是运行时产物,不属于源码,绝不能 commit
+data/
+logs/
 
 # Distribution
 .installed.cfg
