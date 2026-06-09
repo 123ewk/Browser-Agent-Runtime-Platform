@@ -59,7 +59,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("goal", sa.Text(), nullable=False),
-        sa.Column("status", sa.String(20), nullable=False, server_default="PENDING"),
+        sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
         sa.Column("result", postgresql.JSONB(), nullable=True),
         sa.Column(
             "created_at",

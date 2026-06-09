@@ -1,14 +1,18 @@
 /**
- * 任务状态机 —— 与后端 `app/model/task.py` TaskStatus 枚举对齐
+ * 任务状态机 —— 与后端 `app/runtime/protocol/types.py` TaskState 枚举对齐
  *
- * 状态机:PENDING → RUNNING → (SUCCESS | FAILED | CANCELLED)
- *        RUNNING ⇄ AWAITING_HUMAN(半自动模式)
+ * 状态机: pending → running → (completed | failed | cancelled)
+ *         running → waiting_confirm ⇄ running(半自动模式)
+ *         running → paused ⇄ running
+ *         running → stopping → cancelled
  */
 export type TaskStatus =
   | "pending"
   | "running"
-  | "awaiting_human"
-  | "success"
+  | "waiting_confirm"
+  | "paused"
+  | "stopping"
+  | "completed"
   | "failed"
   | "cancelled";
 

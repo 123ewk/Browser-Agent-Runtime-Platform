@@ -20,7 +20,7 @@ const STATUS_STYLES: Record<
       "bg-primary-container/20 text-primary border border-primary-container/30",
     animate: true,
   },
-  awaiting_human: {
+  waiting_confirm: {
     label: "Awaiting",
     labelCn: "需介入",
     dot: "bg-tertiary",
@@ -28,7 +28,21 @@ const STATUS_STYLES: Record<
       "bg-tertiary-container text-on-tertiary-container border border-tertiary-container",
     animate: true,
   },
-  success: {
+  paused: {
+    label: "Paused",
+    labelCn: "已暂停",
+    dot: "bg-on-surface-variant",
+    container: "bg-surface-container text-on-surface-variant",
+    animate: true,
+  },
+  stopping: {
+    label: "Stopping",
+    labelCn: "停止中",
+    dot: "bg-amber-500",
+    container: "bg-surface-container text-on-surface-variant border border-amber-500/30",
+    animate: true,
+  },
+  completed: {
     label: "Success",
     labelCn: "成功",
     dot: "bg-secondary",
@@ -52,6 +66,15 @@ const STATUS_STYLES: Record<
   },
 };
 
+/** 兜底样式 —— 后端新增 status 但前端尚未同步、或 status 为空值时使用 */
+const UNKNOWN_STYLE = {
+  label: "Unknown",
+  labelCn: "未知",
+  dot: "bg-on-surface-variant",
+  container: "bg-surface-container text-on-surface-variant",
+  animate: false,
+} as const;
+
 /** 任务状态徽章 —— capsule 形态(全圆角),与 DESIGN.md 一致 */
 export function StatusBadge({
   status,
@@ -62,7 +85,13 @@ export function StatusBadge({
   readonly lang?: "en" | "cn";
   readonly className?: string;
 }) {
-  const s = STATUS_STYLES[status];
+  // 防御性兜底:后端可能返回前端 STATUS_STYLES 尚未覆盖的 status(例如新增枚举)
+  // 此时降级到 UNKNOWN_STYLE,避免组件崩溃阻塞整个列表渲染
+  const s = STATUS_STYLES[status] ?? UNKNOWN_STYLE;
+  if (!STATUS_STYLES[status] && status !== undefined) {
+    // 上游数据漂移信号:warn 一次,方便定位后端协议与前端样式表的同步缺口
+    console.warn(`[StatusBadge] 未识别的 status: ${String(status)}`);
+  }
   return (
     <span
       className={cn(

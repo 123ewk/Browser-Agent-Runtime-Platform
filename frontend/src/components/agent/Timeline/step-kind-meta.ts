@@ -3,7 +3,6 @@
 import {
   Brain,
   Cog,
-  Eye,
   Hand,
   CheckCircle2,
   Camera,

@@ -33,7 +33,7 @@ class StdinListener:
     """
 
     def __init__(self) -> None:
-        self._running = False
+        self._running = True  # Worker 直接调用 __anext__() 不通过 __aiter__,需默认为 True
         self._stopped = False
 
     def stop(self) -> None:
