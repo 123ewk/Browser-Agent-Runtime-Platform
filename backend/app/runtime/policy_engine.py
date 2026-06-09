@@ -43,6 +43,9 @@ Rules:
 6. For navigate: put the full URL in the "target" field
 7. For click/input_text: put the CSS selector in "target", input text in "value"
 
+User preferences:
+{user_preferences}
+
 Output ONLY valid JSON (no other text):
 {{"skill": "browser", "action": {{"type": "...", "target": "...", "value": null, "description": "..."}}, "reasoning": "...", "is_terminal": false}}"""
 
@@ -90,12 +93,14 @@ class PolicyEngine:
         self,
         goal: str,
         trajectory: Trajectory | None = None,
+        preferences: list | None = None,
     ) -> DecisionResponse:
         """基于目标和轨迹决定下一步动作
 
         Args:
             goal: 用户原始目标
             trajectory: 累积操作轨迹 (None = 第一步)
+            preferences: 用户偏好列表 (None = 未加载), 注入 system prompt
 
         Returns:
             DecisionResponse with skill + action
@@ -106,9 +111,17 @@ class PolicyEngine:
             else "(empty - this is the first step)"
         )
 
+        # 格式化用户偏好
+        if preferences:
+            pref_lines = "\n".join(f"- {p.key}: {p.content}" for p in preferences)
+        else:
+            pref_lines = "(none)"
+
         # 用 str.replace 而非 .format(),避免 goal 中包含 { 或 } 时触发 KeyError
-        prompt = _SYSTEM_PROMPT.replace("{goal}", goal).replace(
-            "{trajectory_summary}", traj_summary
+        prompt = (
+            _SYSTEM_PROMPT.replace("{goal}", goal)
+            .replace("{trajectory_summary}", traj_summary)
+            .replace("{user_preferences}", pref_lines)
         )
         messages = [
             {"role": "system", "content": prompt},

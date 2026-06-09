@@ -20,7 +20,7 @@ import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -55,6 +55,7 @@ class TaskContext:
         storage_state_path: str | None = None,
         max_steps: int = 20,
         timeout_seconds: int = 120,
+        user_id: UUID | None = None,
     ) -> None:
         self.task_id = task_id
         self.goal = goal
@@ -64,6 +65,7 @@ class TaskContext:
         self.storage_state_path = storage_state_path
         self.max_steps = max_steps
         self.timeout_seconds = timeout_seconds
+        self.user_id = user_id  # 用于加载用户偏好(长期记忆)
 
 
 class WorkerLaunchError(RuntimeError):

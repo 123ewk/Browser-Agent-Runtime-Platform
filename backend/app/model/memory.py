@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.model.base import Base, UUIDMixin
@@ -32,5 +32,6 @@ class Memory(Base, UUIDMixin):
     session_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
 
     user: Mapped[User] = relationship(back_populates="memories")

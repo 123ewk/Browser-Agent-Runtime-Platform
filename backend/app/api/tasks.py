@@ -141,6 +141,7 @@ async def create_task(
         goal=payload.goal,
         skill=skill,
         action=action_dict,
+        user_id=user_id,
     )
 
     # 后台启动(不阻塞请求响应)
@@ -383,6 +384,22 @@ async def _run_task(
     # asyncio.Queue 保证并发安全: 多个 handler 同时 put 不会丢事件
     event_queue: asyncio.Queue[RuntimeEvent] = asyncio.Queue()
 
+    # 加载用户偏好(长期记忆) — 注入 PolicyEngine system prompt
+    user_prefs: list | None = None
+    if _pg_client is not None and context.user_id is not None:
+        session = _pg_client.session()
+        try:
+            from app.repository.user_preference import UserPreferenceRepository
+
+            pref_repo = UserPreferenceRepository(session)
+            user_prefs = await pref_repo.list_by_user(context.user_id)
+            log.info("preferences.loaded_for_task", task_id=task_id, count=len(user_prefs))
+        except Exception:
+            log.warning("preferences.load_failed", task_id=task_id, exc_info=True)
+            # 加载失败不阻断任务,继续不带偏好执行
+        finally:
+            await session.close()
+
     def _new_cmd_id() -> str:
         return f"cmd-{uuid4().hex[:12]}"
 
@@ -460,7 +477,9 @@ async def _run_task(
                 # PolicyEngine 决策下一步
                 if _policy_engine is not None:
                     try:
-                        decision = await _policy_engine.decide(context.goal, trajectory)
+                        decision = await _policy_engine.decide(
+                            context.goal, trajectory, preferences=user_prefs
+                        )
 
                         # 检查 is_terminal
                         if decision.is_terminal:
@@ -547,8 +566,7 @@ async def _run_task(
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     result_state = TaskState.FAILED
                     result_reason = (
-                        f"连续 {MAX_CONSECUTIVE_ERRORS} 次错误: "
-                        f"{payload.get('message', 'unknown')}"
+                        f"连续 {MAX_CONSECUTIVE_ERRORS} 次错误: {payload.get('message', 'unknown')}"
                     )
                     await runner.send_command(
                         Command(

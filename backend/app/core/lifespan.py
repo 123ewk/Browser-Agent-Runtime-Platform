@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("timeline_recorder.init_failed", exc_info=True)
 
+    # 初始化 PreferenceExtractor (长期记忆: LLM 压缩用户偏好)
+    from app.api.preferences import init_preference_extractor
+
+    try:
+        init_preference_extractor(deps.llm)
+        log.info("preference_extractor.initialized")
+    except Exception:
+        log.warning("preference_extractor.init_failed", exc_info=True)
+
     log.info("lifespan.startup.complete")
 
     yield

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.model.memory import Memory
     from app.model.session import UserSession
     from app.model.task import Task
+    from app.model.user_preference import UserPreference
 
 
 class User(Base, UUIDMixin):
@@ -33,5 +34,8 @@ class User(Base, UUIDMixin):
     )
     tasks: Mapped[list[Task]] = relationship(back_populates="user", cascade="all, delete-orphan")
     memories: Mapped[list[Memory]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    preferences: Mapped[list[UserPreference]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
