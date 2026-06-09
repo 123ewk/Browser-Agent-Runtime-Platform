@@ -7,7 +7,7 @@ export async function getTaskTimeline(
   taskId: string,
 ): Promise<readonly TimelineStep[]> {
   const { data } = await apiClient.get<readonly TimelineStep[]>(
-    `/api/tasks/${taskId}/timeline`,
+    `/tasks/${taskId}/timeline`,
   );
   return data;
 }
@@ -19,7 +19,7 @@ export async function postTaskMessage(
   runMode: RunMode,
 ): Promise<ChatMessage> {
   const { data } = await apiClient.post<ChatMessage>(
-    `/api/tasks/${taskId}/messages`,
+    `/tasks/${taskId}/messages`,
     { content, runMode },
   );
   return data;

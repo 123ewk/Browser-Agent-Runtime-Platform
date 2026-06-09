@@ -28,8 +28,14 @@ class TaskRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, user_id: uuid.UUID, dto: TaskCreate) -> TaskOut:
-        task = Task(user_id=user_id, goal=dto.goal)
+    async def create(
+        self, user_id: uuid.UUID, dto: TaskCreate, task_id: uuid.UUID | None = None
+    ) -> TaskOut:
+        task = Task(
+            id=task_id or uuid.uuid4(),
+            user_id=user_id,
+            goal=dto.goal,
+        )
         self._session.add(task)
         await self._session.flush()
         return TaskOut.model_validate(task)

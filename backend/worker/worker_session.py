@@ -84,10 +84,10 @@ class WorkerSession:
             )
         )
 
-        # V1 兜底超时 —— 防止 Runtime 端没发 CONTINUE 时 Worker 永远阻塞
-        # 该值偏小是因为 V1 demo 场景下 Runtime 不会主动发 CONTINUE,
-        # 5s 是"假装完成"的合理超时;V2 闭环后应增大到几十秒或彻底去掉
-        IDLE_TIMEOUT_SECONDS = 5.0
+        # 保底超时 —— 防止 Runtime 崩溃后 Worker 僵尸进程
+        # 正常流程由 Runtime 端 auto loop 发送 CONTINUE/STOP,
+        # 此超时仅在 Runtime 崩溃/网络断开等极端情况下兜底。
+        SAFETY_TIMEOUT_SECONDS = 300.0
 
         listener = StdinListener()
         started = False
@@ -100,22 +100,21 @@ class WorkerSession:
                     if started:
                         command = await asyncio.wait_for(
                             listener.__anext__(),
-                            timeout=IDLE_TIMEOUT_SECONDS,
+                            timeout=SAFETY_TIMEOUT_SECONDS,
                         )
                     else:
                         command = await listener.__anext__()
                 except TimeoutError:
-                    # V1 兼容: 没有更多命令 → 强制 emit COMPLETED(实际只跑了 1 步)
-                    # 该行为是 demo 阶段的妥协,V2 应在 Runtime 端起 continuation loop 替代
-                    logger.warning(
-                        "worker.idle_timeout_force_finish",
+                    # 保底超时: Runtime 崩溃或网络断开,Worker 安全退出
+                    logger.error(
+                        "worker.safety_timeout",
                         task_id=self._task_id,
                         step_count=self._step_count,
-                        timeout_seconds=IDLE_TIMEOUT_SECONDS,
+                        timeout_seconds=SAFETY_TIMEOUT_SECONDS,
                     )
                     self._emit_finished(
-                        TaskResult.COMPLETED,
-                        f"Task completed, {self._step_count} steps",
+                        TaskResult.FAILED,
+                        f"Worker safety timeout — Runtime unresponsive ({self._step_count} steps)",
                         total_steps=self._step_count,
                     )
                     return

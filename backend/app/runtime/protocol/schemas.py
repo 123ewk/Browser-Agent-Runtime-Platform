@@ -171,10 +171,11 @@ class StartPayload(BaseModel):
 
 
 class ContinuePayload(BaseModel):
-    """CONTINUE 命令的 payload —— 人工确认后继续"""
+    """CONTINUE 命令的 payload —— 人工确认后继续 / Auto Loop 下一步动作"""
 
-    approved: bool
+    approved: bool = True
     feedback: str = ""  # 用户的额外反馈(可选)
+    action: dict | None = None  # Auto Loop: PolicyEngine 输出的下一步动作
 
 
 class RejectPayload(BaseModel):

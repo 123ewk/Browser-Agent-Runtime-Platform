@@ -42,6 +42,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("policy_engine.init_failed", exc_info=True)
 
+    # 初始化 TimelineRecorder (Phase 1.5: 执行轨迹落库)
+    from app.api.tasks import init_timeline_recorder
+
+    try:
+        init_timeline_recorder(deps.pg)
+        log.info("timeline_recorder.initialized")
+    except Exception:
+        log.warning("timeline_recorder.init_failed", exc_info=True)
+
     log.info("lifespan.startup.complete")
 
     yield

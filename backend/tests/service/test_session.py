@@ -166,27 +166,23 @@ async def test_delete_does_delay_double_delete(
     mock_repo.delete = AsyncMock()
 
     # monkeypatch asyncio.sleep 避免真等 500ms
+    # 用 AsyncMock 替换后,_delayed_second_delete 内的 await asyncio.sleep(0.5) 立即返回
     original_sleep = asyncio.sleep
     asyncio.sleep = AsyncMock()  # noqa: B010 - 测试中缩短延迟
 
-    # monkeypatch create_task:让后台任务同步 await,确保断言前已执行
-    original_create_task = asyncio.create_task
-
-    async def _run_immediately(coro):
-        """同步执行后台协程,替代 create_task 的异步调度。"""
-        await coro
-
-    asyncio.create_task = _run_immediately  # type: ignore[assignment]
-
     try:
         await svc.delete(token)
+
+        # create_task 将 _delayed_second_delete 调度到 event loop,
+        # 用原始 asyncio.sleep(0) 让出控制权(不能用 mock,不会真正 yield),
+        # 此时 event loop 执行已调度的任务,mock_cache.delete 第二次调用
+        await original_sleep(0)
 
         assert mock_cache.delete.call_count == 2
         assert mock_repo.delete.call_count == 1
         mock_repo.delete.assert_awaited_once_with(token)
     finally:
         asyncio.sleep = original_sleep
-        asyncio.create_task = original_create_task
 
 
 async def test_delete_second_failure_logged(
@@ -201,17 +197,11 @@ async def test_delete_second_failure_logged(
     original_sleep = asyncio.sleep
     asyncio.sleep = AsyncMock()
 
-    # 让 create_task 同步执行后台任务
-    original_create_task = asyncio.create_task
-
-    async def _run_immediately(coro):
-        await coro
-
-    asyncio.create_task = _run_immediately  # type: ignore[assignment]
-
     try:
-        # 不应抛出异常
+        # 不应抛出异常(第二删失败只记日志)
         await svc.delete(token)
+        # 用原始 asyncio.sleep(0) 让出控制权(不能用 mock,不会真正 yield),
+        # 让 create_task 调度的 _delayed_second_delete 执行
+        await original_sleep(0)
     finally:
         asyncio.sleep = original_sleep
-        asyncio.create_task = original_create_task

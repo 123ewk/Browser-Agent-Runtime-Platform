@@ -17,8 +17,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.stats import router as stats_router
 from app.api.tasks import router as tasks_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
@@ -49,6 +51,8 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(tasks_router)
+app.include_router(stats_router)
+app.include_router(agents_router)
 
 if __name__ == "__main__":
     # pre-commit hook 跑 mypy 时未必在 backend venv 内,uvicorn import 需 type: ignore

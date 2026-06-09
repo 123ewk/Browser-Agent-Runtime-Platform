@@ -5,7 +5,7 @@ import { apiClient } from "./client";
 export async function getDashboardStats(
   window: DashboardStats["window"] = "24h",
 ): Promise<DashboardStats> {
-  const { data } = await apiClient.get<DashboardStats>("/api/stats/dashboard", {
+  const { data } = await apiClient.get<DashboardStats>("/stats/dashboard", {
     params: { window },
   });
   return data;

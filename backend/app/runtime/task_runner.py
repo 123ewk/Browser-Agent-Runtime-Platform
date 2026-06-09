@@ -440,6 +440,11 @@ class BrowserTaskRunner:
         """proc.wait() → 检测异常退出
 
         正常退出时 returncode=0,异常退出(returncode≠0)时发布 ERROR 事件。
+
+        设计说明: proc.wait() 阻塞直到进程退出,这是正确行为 ——
+        Worker 进程在执行任务期间应一直存活(Runtime 端 _run_task 循环已有超时兜底)。
+        不要在这里加 asyncio.wait_for 超时,会让正常运行中的任务被误杀。
+        V2 真正的 Watchdog 应基于 Worker 心跳事件而非 proc.wait()。
         """
         assert self._process is not None
 
