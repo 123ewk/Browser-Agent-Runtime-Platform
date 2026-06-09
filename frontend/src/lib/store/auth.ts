@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { AuthState, LoginPayload, RegisterPayload, UserOut } from "@/types/auth";
-import { loginApi, logoutApi, registerApi } from "@/lib/api/auth";
+import { loginApi, logoutApi, registerApi, getCurrentUser } from "@/lib/api/auth";
 
 /**
  * Auth 全局状态 —— 管理 token + user 持久化
@@ -13,13 +13,12 @@ import { loginApi, logoutApi, registerApi } from "@/lib/api/auth";
  *   刷新页面后自动恢复登录态,避免每次进首页都跳登录
  * - logout 时只清前端态,后端的 Session 延迟双删交给 logoutApi
  * - 401 由 apiClient 响应拦截器统一处理 → 调 clearAuth()
- * - 当前后端没提供 GET /users/me,登录/注册后只拿到 token,
- *   user 信息用最小占位对象(username + id=pending),后续接 /me 再补全
+ * - 登录/注册后调 GET /auth/me 获取完整用户信息(id + created_at)
  */
 interface AuthStoreState {
   /** 当前 token —— 存在即视为已登录 */
   readonly token: string | null;
-  /** 当前用户信息(从 username 推导 id=pending) */
+  /** 当前用户信息(从 GET /auth/me 获取) */
   readonly user: UserOut | null;
   /** 是否处于登录/注册异步过程中(给 UI 禁用按钮用) */
   readonly isAuthenticating: boolean;
@@ -37,16 +36,22 @@ interface AuthStoreState {
 }
 
 /**
- * token → user 的最小推导 —— 后端没提供 /users/me,先用 username 占位
+ * 登录/注册后获取真实用户信息 —— 调 GET /auth/me 补全 id + created_at
  *
- * 等后端实现 GET /users/me 后,这里改成调一次 /me 拿真实 id + created_at。
+ * 如果 /me 调用失败(网络问题),回退到最小占位对象,保证登录流程不中断。
  */
-function deriveUserFromToken(token: string, username: string): UserOut {
-  return {
-    id: "pending",
-    username,
-    created_at: new Date().toISOString(),
-  };
+async function fetchCurrentUser(token: string, username: string): Promise<UserOut> {
+  try {
+    return await getCurrentUser();
+  } catch {
+    // /me 失败时回退到占位对象,不阻断登录
+    console.warn("[auth] GET /auth/me 失败,使用占位用户信息");
+    return {
+      id: "pending",
+      username,
+      created_at: new Date().toISOString(),
+    };
+  }
 }
 
 export const useAuthStore = create<AuthStoreState>()(
@@ -64,10 +69,8 @@ export const useAuthStore = create<AuthStoreState>()(
         set({ isAuthenticating: true });
         try {
           const { access_token } = await loginApi({ username, password });
-          set({
-            token: access_token,
-            user: deriveUserFromToken(access_token, username),
-          });
+          const user = await fetchCurrentUser(access_token, username);
+          set({ token: access_token, user });
         } finally {
           set({ isAuthenticating: false });
         }
@@ -77,10 +80,8 @@ export const useAuthStore = create<AuthStoreState>()(
         set({ isAuthenticating: true });
         try {
           const { access_token } = await registerApi({ username, password });
-          set({
-            token: access_token,
-            user: deriveUserFromToken(access_token, username),
-          });
+          const user = await fetchCurrentUser(access_token, username);
+          set({ token: access_token, user });
         } finally {
           set({ isAuthenticating: false });
         }

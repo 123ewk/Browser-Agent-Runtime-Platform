@@ -9,10 +9,11 @@ V1 只做最简接口:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import structlog
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from app.core.deps import get_current_user_id
 from app.core.security import decode_token
@@ -28,7 +29,8 @@ from app.runtime.task_runner import BrowserTaskRunner, TaskContext
 from app.runtime.task_state import TaskStateManager
 from app.runtime.trajectory import Trajectory
 from app.runtime.ws_manager import WebSocketManager
-from app.schema.task import TaskCreate
+from app.schema.task import TaskCreate, TaskMessageCreate, TaskMessageOut, TaskOut
+from app.schema.task_step import TaskStepOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 log = structlog.get_logger(__name__)
@@ -284,12 +286,121 @@ async def get_task_timeline(
 
 
 def _step_kind_from_action(action: str) -> str:
-    """将 Worker action 类型映射为前端 TimelineStepKind"""
+    """将 Worker action 类型映射为前端 TimelineStepKind
+
+    映射规则:
+    - think: LLM 思考/推理类动作(当前 Worker 不单独上报,预留)
+    - tool: 浏览器操作类(navigate/click/input_text/screenshot/extract/scroll)
+    - observe: 错误/观察类(ERROR/STEP_FAILED)
+    - human: 人工确认类(NEED_CONFIRM 事件触发)
+    - complete: 任务完成类
+    """
     if action in ("navigate", "click", "input_text", "screenshot", "extract", "scroll"):
         return "tool"
     if action.startswith("ERROR") or action.startswith("STEP_FAILED"):
         return "observe"
+    if action in ("NEED_CONFIRM", "confirm", "human_input"):
+        return "human"
+    if action in ("TASK_FINISHED", "complete", "done"):
+        return "complete"
+    if action in ("think", "reason", "plan"):
+        return "think"
+    # 默认归为 tool —— 未知动作类型大概率是新的浏览器操作
     return "tool"
+
+
+@router.post("/{task_id}/messages")
+async def send_task_message(
+    task_id: str,
+    payload: TaskMessageCreate,
+    user_id: UUID = Depends(get_current_user_id),
+) -> TaskMessageOut:
+    """用户向 Agent 发送指令 —— 半自动模式核心端点
+
+    前端 postTaskMessage() 调用此端点,实现:
+    - 半自动模式:用户确认/拒绝/反馈
+    - 运行中追加指令:用户补充说明
+
+    实现方式:根据任务当前状态决定发送哪种 Command:
+    - WAITING_CONFIRM + 用户确认 → CONTINUE(approved=True, feedback=content)
+    - WAITING_CONFIRM + 用户拒绝 → REJECT(reason=content)
+    - RUNNING → CONTINUE(feedback=content),让 PolicyEngine 考虑用户反馈
+    """
+    # 生成消息 ID
+    msg_id = str(uuid4())
+    now_iso = datetime.now(UTC).isoformat()
+
+    # 查询任务当前状态
+    current_state = _task_state_mgr.get_state(task_id)
+
+    # 查找活跃 runner
+    runner = _active_runners.get(task_id)
+
+    if runner is None:
+        # runner 不存在可能是任务已结束,仍返回用户消息(前端需要确认)
+        log.warning("message.no_active_runner", task_id=task_id, state=current_state.value)
+        return TaskMessageOut(
+            id=msg_id,
+            task_id=task_id,
+            role="user",
+            content=payload.content,
+            created_at=now_iso,
+        )
+
+    # 根据当前状态决定发送哪种命令
+    if current_state == TaskState.WAITING_CONFIRM:
+        # 简单启发式:内容含"拒绝"/"取消"/"不要"/"no"/"reject"视为拒绝
+        reject_keywords = {"拒绝", "取消", "不要", "no", "reject", "cancel", "stop"}
+        is_reject = any(kw in payload.content.lower() for kw in reject_keywords)
+
+        if is_reject:
+            cmd = Command(
+                command_id=f"cmd-{uuid4().hex[:12]}",
+                type=CommandType.REJECT,
+                payload={"reason": payload.content},
+            )
+            log.info("message.reject_sent", task_id=task_id, content=payload.content[:80])
+        else:
+            cmd = Command(
+                command_id=f"cmd-{uuid4().hex[:12]}",
+                type=CommandType.CONTINUE,
+                payload={"approved": True, "feedback": payload.content},
+            )
+            # WAITING_CONFIRM → RUNNING(用户确认后恢复)
+            try:
+                await _task_state_mgr.transition(
+                    task_id, TaskState.RUNNING, f"用户确认: {payload.content[:80]}"
+                )
+            except Exception:
+                log.warning("message.state_transition_failed", task_id=task_id, exc_info=True)
+            log.info("message.continue_sent", task_id=task_id, content=payload.content[:80])
+
+        await runner.send_command(cmd)
+
+    elif current_state == TaskState.RUNNING:
+        # 运行中追加用户反馈
+        cmd = Command(
+            command_id=f"cmd-{uuid4().hex[:12]}",
+            type=CommandType.CONTINUE,
+            payload={"feedback": payload.content},
+        )
+        await runner.send_command(cmd)
+        log.info("message.feedback_sent", task_id=task_id, content=payload.content[:80])
+
+    else:
+        log.warning(
+            "message.task_not_accepting",
+            task_id=task_id,
+            state=current_state.value,
+        )
+
+    return TaskMessageOut(
+        id=msg_id,
+        task_id=task_id,
+        role="user",
+        content=payload.content,
+        created_at=now_iso,
+    )
 
 
 @router.get("/{task_id}")
@@ -297,13 +408,109 @@ async def get_task(
     task_id: str,
     user_id: UUID = Depends(get_current_user_id),
 ) -> dict:
-    """查询任务状态"""
-    state = _task_state_mgr.get_state(task_id)
-    reason = _task_state_mgr.get_reason(task_id)
+    """查询任务详情 —— 返回与前端 TaskDetail 对齐的完整字段
+
+    数据源合并策略:
+    - DB(tasks 表): goal, created_at, updated_at, result 等持久化字段
+    - 内存(TaskStateManager): 实时状态(比 DB 更及时)
+    - 内存(_active_runners): 运行时步骤/截图/技能调用
+
+    字段名对齐前端:
+    - 后端 task_id → 前端 id
+    - 后端 state → 前端 status
+    - 后端 created_at → 前端 createdAt(camelCase)
+    """
+    # 内存状态(实时)
+    runtime_state = _task_state_mgr.get_state(task_id)
+
+    # DB 持久化数据
+    db_task: TaskOut | None = None
+    db_steps: list[TaskStepOut] = []
+
+    if _pg_client is not None:
+        try:
+            task_uuid = UUID(task_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid task_id format") from None
+
+        session = _pg_client.session()
+        try:
+            task_repo = TaskRepository(session)
+            db_task = await task_repo.get_by_id(task_uuid)
+
+            # 校验任务归属
+            if db_task is None or db_task.user_id != user_id:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # 查询步骤
+            step_repo = TaskStepRepository(session)
+            db_steps = await step_repo.list_by_task(task_uuid)
+        except HTTPException:
+            raise
+        except Exception:
+            await session.rollback()
+            log.warning("task.get_query_failed", task_id=task_id, exc_info=True)
+        finally:
+            await session.close()
+
+    if db_task is None:
+        # DB 无记录(可能纯内存任务),返回运行时数据
+        return {
+            "id": task_id,
+            "goal": "",
+            "agentName": "browser-agent",
+            "status": runtime_state.value,
+            "createdAt": "",
+            "updatedAt": "",
+            "costUsd": 0,
+            "totalDurationSec": 0,
+            "totalTokens": 0,
+            "steps": [],
+            "screenshots": [],
+            "skillCalls": [],
+        }
+
+    # 合并 DB + 运行时数据
+    # status 优先用运行时状态(更实时),回退到 DB 状态
+    status = runtime_state.value if runtime_state != TaskState.PENDING else db_task.status
+
+    # 构造步骤列表(与前端 TaskStep 对齐)
+    steps = [
+        {
+            "index": s.step_index,
+            "kind": _step_kind_from_action(s.action),
+            "title": s.action,
+            "summary": (s.result or {}).get("summary", ""),
+            "startedAt": "",
+            "durationMs": (s.result or {}).get("duration_ms", 0) or 0,
+            "tokens": s.tokens_used or 0,
+        }
+        for s in db_steps
+    ]
+
+    # 从 result JSONB 提取截图和技能调用
+    result_data = db_task.result or {}
+    screenshots = result_data.get("screenshots", [])
+    skill_calls = result_data.get("skill_calls", [])
+
+    # 计算总耗时和总 token
+    total_tokens = sum(s.tokens_used or 0 for s in db_steps)
+
     return {
-        "task_id": task_id,
-        "state": state.value,
-        "reason": reason,
+        "id": str(db_task.id),
+        "goal": db_task.goal,
+        "agentName": "browser-agent",
+        "status": status,
+        "createdAt": db_task.created_at.isoformat(),
+        "updatedAt": db_task.updated_at.isoformat()
+        if db_task.updated_at
+        else db_task.created_at.isoformat(),
+        "costUsd": 0,
+        "totalDurationSec": result_data.get("total_duration_sec", 0) or 0,
+        "totalTokens": total_tokens,
+        "steps": steps,
+        "screenshots": screenshots,
+        "skillCalls": skill_calls,
     }
 
 

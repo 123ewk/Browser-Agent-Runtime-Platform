@@ -45,6 +45,27 @@ class TaskOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TaskMessageCreate(BaseModel):
+    """用户向 Agent 发送指令 —— 半自动模式确认/拒绝/反馈
+
+    content: 用户输入的指令文本(如"继续"/"取消"/"换一种方式")
+    run_mode: 当前运行模式(yolo=全自动, semi=半自动)
+    """
+
+    content: str = Field(min_length=1, max_length=2000)
+    run_mode: str = Field(default="semi", pattern=r"^(yolo|semi)$")
+
+
+class TaskMessageOut(BaseModel):
+    """消息出参 —— 与前端 ChatMessage 类型对齐"""
+
+    id: str
+    task_id: str
+    role: str  # "user" | "agent"
+    content: str
+    created_at: str  # ISO 8601
+
+
 class TaskListResponse(BaseModel):
     """分页响应 —— 用 limit/offset 而非 cursor 分页。
 

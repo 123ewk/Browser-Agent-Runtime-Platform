@@ -81,3 +81,16 @@ async def logout(
     降低被窃 token 在有效期内可重放的窗口。"""
     await svc.delete(credentials.credentials)
     log.info("auth.logout", user_id=str(current_user.id))
+
+
+@router.get("/me", response_model=UserOut)
+async def get_current_user_info(
+    current_user: UserOut = Depends(get_current_user),
+) -> UserOut:
+    """获取当前登录用户信息 —— 前端登录后调用,补全 user.id 和 created_at
+
+    为什么不在 login/register 响应中直接返回 user:
+    - TokenResponse 只含 access_token,职责单一
+    - 前端拿到 token 后调 /me 获取完整用户信息,解耦认证与用户查询
+    """
+    return current_user

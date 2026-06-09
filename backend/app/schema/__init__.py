@@ -5,7 +5,14 @@
 
 from app.schema.checkpoint import CheckpointOut
 from app.schema.health import HealthResponse, ReadyResponse
-from app.schema.task import TaskCreate, TaskListResponse, TaskOut, TaskUpdate
+from app.schema.task import (
+    TaskCreate,
+    TaskListResponse,
+    TaskMessageCreate,
+    TaskMessageOut,
+    TaskOut,
+    TaskUpdate,
+)
 from app.schema.task_step import TaskStepOut
 from app.schema.user import TokenResponse, UserCreate, UserLogin, UserOut
 from app.schema.user_preference import (
@@ -26,6 +33,8 @@ __all__ = [
     "TaskCreate",
     "TaskUpdate",
     "TaskOut",
+    "TaskMessageCreate",
+    "TaskMessageOut",
     "TaskListResponse",
     "TaskStepOut",
     "CheckpointOut",
