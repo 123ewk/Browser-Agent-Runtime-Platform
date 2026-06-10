@@ -36,7 +36,7 @@ from app.runtime.protocol.schemas import (
     StepStartPayload,
     TaskFinishedPayload,
 )
-from app.runtime.protocol.types import CommandType, EventType, TaskResult
+from app.runtime.protocol.types import CommandType, EventType, TaskResult, WorkerStatus
 from app.runtime.trajectory import Trajectory
 
 from .browser_manager import BrowserManager
@@ -67,7 +67,12 @@ class WorkerSession:
         self._step_count = 0
         self._goal = ""
         self._max_steps = 20
-        self._heartbeat_sender = HeartbeatSender(task_id)
+        # Worker 当前状态,供心跳上报给 Runtime Watchdog
+        self._worker_status = WorkerStatus.IDLE
+        self._heartbeat_sender = HeartbeatSender(
+            task_id,
+            status_cb=lambda: self._worker_status,
+        )
 
     async def run(self) -> None:
         """Worker 主循环
@@ -144,6 +149,7 @@ class WorkerSession:
                     await self._handle_start(command)
                     skill_name = command.payload.get("skill", "browser")
                     started = True
+                    self._worker_status = WorkerStatus.RUNNING
 
                 elif command.type == CommandType.CONTINUE:
                     if not started:

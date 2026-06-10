@@ -123,6 +123,7 @@ def init_watchdog() -> ProcessWatchdog:
 
     Watchdog 订阅 WORKER_HEARTBEAT 事件,并启动后台扫描协程。
     所有 BrowserTaskRunner 共享同一个 watchdog 实例。
+    shutdown 时需调用 shutdown_watchdog() 清理订阅 + 停止扫描。
     """
     global _watchdog
     _watchdog = ProcessWatchdog(_event_bus)
@@ -130,6 +131,19 @@ def init_watchdog() -> ProcessWatchdog:
     _watchdog.start()
     log.info("watchdog.initialized")
     return _watchdog
+
+
+async def shutdown_watchdog() -> None:
+    """关闭 ProcessWatchdog —— 在 lifespan shutdown 时调用
+
+    反序清理: unsubscribe → stop,防止 stop 后仍有事件触发 handler。
+    """
+    global _watchdog
+    if _watchdog is None:
+        return
+    _event_bus.unsubscribe(EventType.WORKER_HEARTBEAT, _watchdog.on_heartbeat)
+    await _watchdog.stop()
+    log.info("watchdog.shutdown_complete")
 
 
 def get_watchdog() -> ProcessWatchdog | None:
@@ -1153,6 +1167,12 @@ async def _run_task(
                 )
                 result_state = TaskState.FAILED
                 result_reason = "Worker 心跳超时,进程可能死锁"
+
+                # 主动停止 Worker,防止僵尸进程(心跳丢失但进程仍存活)
+                try:
+                    await runner.stop_task()
+                except Exception:
+                    log.warning("task.watchdog_stop_failed", task_id=task_id, exc_info=True)
 
                 # 超时前保存 checkpoint(标记 error 类型,可供人工恢复)
                 if _checkpoint_manager is not None:

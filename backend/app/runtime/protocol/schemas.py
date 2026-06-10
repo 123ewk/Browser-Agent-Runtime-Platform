@@ -156,9 +156,9 @@ class WatchdogTimeoutPayload(BaseModel):
 
     last_heartbeat_seq: int
     seconds_since_last: float
-    task_id: str = ""
+    task_id: str  # 超时的任务 ID(必填,由 _fire_timeout 显式传入)
     worker_pid: int | None = None
-    status_at_last: str = "unknown"
+    status_at_last: str  # 超时前 Worker 状态(必填,如 "running"/"idle")
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -88,11 +88,13 @@ class HeartbeatSender:
     async def _run(self) -> None:
         """后台循环: 每 interval 秒发送一次 WORKER_HEARTBEAT
 
-        异常时记录日志但不中断循环。
-        只有 CancelledError 才能退出循环。
+        连续异常超过阈值后退出循环(emit_event 反复失败意味着 stdout 已关闭,
+        Worker 继续运行无意义,让外层 WorkerSession 的 safety timeout 兜底退出)。
         """
-        try:
-            while True:
+        max_consecutive_errors = 3
+        consecutive_errors = 0
+        while True:
+            try:
                 self._seq += 1
                 status = self._status_cb()
                 event = RuntimeEvent(
@@ -107,12 +109,23 @@ class HeartbeatSender:
                     },
                 )
                 emit_event(event)
-                await asyncio.sleep(self._interval)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "heartbeat_sender.error",
-                task_id=self._task_id,
-                exc_info=True,
-            )
+                consecutive_errors = 0  # 发送成功,重置计数
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                consecutive_errors += 1
+                logger.warning(
+                    "heartbeat_sender.error",
+                    task_id=self._task_id,
+                    consecutive_errors=consecutive_errors,
+                    exc_info=True,
+                )
+                if consecutive_errors >= max_consecutive_errors:
+                    # 连续失败超过阈值: stdout 大概率已关闭,退出循环让 Worker 自行终止
+                    logger.critical(
+                        "heartbeat_sender.consecutive_failures_exceeded",
+                        task_id=self._task_id,
+                        max_errors=max_consecutive_errors,
+                    )
+                    return
+            await asyncio.sleep(self._interval)

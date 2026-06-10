@@ -162,6 +162,7 @@ class ProcessWatchdog:
         """更新心跳时间戳
 
         由 on_heartbeat 调用,也暴露为公共接口方便测试。
+        若 Worker 在超时触发后恢复心跳,清除 _fired 标记以允许再次检测超时。
         """
         async with self._lock:
             state = self._registry.get(task_id)
@@ -172,6 +173,8 @@ class ProcessWatchdog:
             state.status = status
             if pid is not None:
                 state.pid = pid
+            # Worker 恢复心跳,清除超时标记(允许未来再次检测到超时)
+            self._fired.discard(task_id)
 
     # ═══════════════════════════════════════════════════════════
     # EventBus Handler
@@ -203,12 +206,16 @@ class ProcessWatchdog:
     # ═══════════════════════════════════════════════════════════
 
     def get_state(self, task_id: str) -> WorkerHeartbeatState | None:
-        """获取指定 Worker 的心跳状态(非线程安全,仅用于调试/监控)"""
+        """获取指定 Worker 的心跳状态
+
+        注意: 此方法无锁保护,仅在 asyncio 单线程事件循环上下文中调用安全。
+        若未来引入多线程(如监控指标采集线程),需改为 async + Lock。
+        """
         return self._registry.get(task_id)
 
     @property
     def active_count(self) -> int:
-        """当前监控的 Worker 数量"""
+        """当前监控的 Worker 数量(仅限 asyncio 单线程上下文调用)"""
         return len(self._registry)
 
     # ═══════════════════════════════════════════════════════════
@@ -240,7 +247,12 @@ class ProcessWatchdog:
         三步:
         1. 快照注册表(在锁内复制引用)
         2. 逐条判断超时
-        3. 超时则发布事件 + 从注册表移除
+        3. 超时则发布事件
+
+        TOCTOU 说明:
+        快照时刻未超时但二次确认时已超时的 task,会在下次扫描被捕获,
+        延迟最多一个 scan_interval(15s),可接受。
+        快照时刻已超时但二次确认时已被 unregister 的 task,会被跳过(正确行为)。
         """
         now = time.monotonic()
 
@@ -292,6 +304,5 @@ class ProcessWatchdog:
 
         await self._event_bus.publish(event)
 
-        # 从注册表移除(防止后续扫描重复触发)
-        async with self._lock:
-            self._registry.pop(task_id, None)
+        # 不从注册表移除:若 Worker 恢复心跳,update_heartbeat 会清除 _fired 标记,
+        # Watchdog 可再次检测到超时。真正的清理由 TaskRunner.cleanup() → unregister 完成。

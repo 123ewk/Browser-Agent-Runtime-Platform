@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("lifespan.shutdown.begin")
 
     # 停止 rehydrate watchdog + 进程心跳 watchdog(在释放 pg 之前)
-    from app.api.tasks import get_task_state_manager, get_watchdog
+    from app.api.tasks import get_task_state_manager, shutdown_watchdog
 
     try:
         await get_task_state_manager().stop_watchdog()
@@ -107,11 +107,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.exception("rehydrate_watchdog.stop_failed")
 
     try:
-        wd = get_watchdog()
-        if wd is not None:
-            await wd.stop()
+        await shutdown_watchdog()
     except Exception:
-        log.exception("process_watchdog.stop_failed")
+        log.exception("process_watchdog.shutdown_failed")
 
     for name, close_fn in [
         ("llm", deps.llm.aclose),
