@@ -75,23 +75,58 @@ const UNKNOWN_STYLE = {
   animate: false,
 } as const;
 
-/** 任务状态徽章 —— capsule 形态(全圆角),与 DESIGN.md 一致 */
+/** 加载中样式 —— status 还没返回(undefined / null / "")时的占位 */
+const LOADING_STYLE = {
+  label: "Loading",
+  labelCn: "加载中",
+  dot: "bg-on-surface-variant/50",
+  container: "bg-surface-container text-on-surface-variant/70",
+  animate: true,
+} as const;
+
+/** 任务状态徽章 —— capsule 形态(全圆角),与 DESIGN.md 一致
+
+2026-06-10 改进:
+- status 改为可选, undefined / null / "" 走 LOADING_STYLE(显示"加载中"而非"未知")
+- 仅当 status 是 string 但不在 STATUS_STYLES 时才走 UNKNOWN_STYLE(显示"未知")
+- 用 typeof === "string" 排除非字符串值(防御 TS 类型滥用)
+*/
 export function StatusBadge({
   status,
   lang = "cn",
   className,
 }: {
-  readonly status: TaskStatus;
+  readonly status: TaskStatus | string | null | undefined;
   readonly lang?: "en" | "cn";
   readonly className?: string;
 }) {
-  // 防御性兜底:后端可能返回前端 STATUS_STYLES 尚未覆盖的 status(例如新增枚举)
-  // 此时降级到 UNKNOWN_STYLE,避免组件崩溃阻塞整个列表渲染
-  const s = STATUS_STYLES[status] ?? UNKNOWN_STYLE;
-  if (!STATUS_STYLES[status] && status !== undefined) {
+  // 1. undefined / null / "" → 加载中
+  if (status === undefined || status === null || status === "") {
+    return renderBadge(LOADING_STYLE, lang, className);
+  }
+
+  // 2. 已知 status → 走 STATUS_STYLES
+  // 3. 未知 status(字符串但不在白名单) → 走 UNKNOWN_STYLE 并 warn
+  const s =
+    typeof status === "string" && status in STATUS_STYLES
+      ? STATUS_STYLES[status as TaskStatus]
+      : UNKNOWN_STYLE;
+
+  if (s === UNKNOWN_STYLE) {
     // 上游数据漂移信号:warn 一次,方便定位后端协议与前端样式表的同步缺口
     console.warn(`[StatusBadge] 未识别的 status: ${String(status)}`);
   }
+  return renderBadge(s, lang, className);
+}
+
+function renderBadge(
+  s:
+    | (typeof STATUS_STYLES)[TaskStatus]
+    | typeof UNKNOWN_STYLE
+    | typeof LOADING_STYLE,
+  lang: "en" | "cn",
+  className: string | undefined,
+): React.ReactElement {
   return (
     <span
       className={cn(

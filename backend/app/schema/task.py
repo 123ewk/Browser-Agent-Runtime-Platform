@@ -78,3 +78,23 @@ class TaskListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class TaskActionResponse(BaseModel):
+    """通用任务动作响应 —— 用于 stop / pause / resume 接口的出参
+
+    字段含义:
+    - task_id:  任务 ID
+    - state:    转换后的状态(不一定等于目标状态,如对终态任务调 stop 会返回原状态)
+    - accepted: 请求是否被接受(状态转换是否成功)
+    - reason:   失败时的原因(成功时为空字符串)
+
+    为什么用通用响应而非各自一个 DTO:
+    - 三个接口的响应语义相似(请求 → 状态变更)
+    - 通用 DTO 减少 schema 维护成本,前端用一个 type 就能接
+    """
+
+    task_id: str
+    state: str
+    accepted: bool
+    reason: str = ""

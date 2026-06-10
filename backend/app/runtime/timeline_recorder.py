@@ -26,6 +26,10 @@ from .protocol.schemas import RuntimeEvent
 
 logger = structlog.get_logger(__name__)
 
+# Task-level 错误(如 Worker 进程崩溃 / 系统超时)写入 task_steps 时使用的 step_index
+# 用负数与正常 step(>=0)区分,前端可按 step_index 排序时把它们放最前/最后
+TASK_LEVEL_STEP_INDEX: int = -1
+
 
 class TimelineRecorder:
     """监听 EventBus → 写 task_steps 表 + 同步 tasks 表状态
@@ -33,7 +37,7 @@ class TimelineRecorder:
     订阅的事件:
     - STEP_START: 缓存步骤元信息(供 STEP_COMPLETE 时使用)
     - STEP_COMPLETE: 写入完整步骤行到 task_steps
-    - ERROR: 写入错误步骤行到 task_steps
+    - ERROR: 写入错误步骤行到 task_steps(step 级 + task 级都写,2026-06-10 修复)
     - TASK_STATE_CHANGED: 同步任务状态到 tasks 表
     """
 
@@ -105,12 +109,20 @@ class TimelineRecorder:
         )
 
     async def _on_error(self, event: RuntimeEvent) -> None:
-        """ERROR: 写入错误步骤行"""
+        """ERROR: 写入错误步骤行
+
+        2026-06-10 bug 修复:
+        旧实现仅处理 step_index 非空的 step 级 ERROR, 跳过 task 级 ERROR(如
+        Worker 进程崩溃 WORKER_CRASHED / 系统 STDERR WORKER_STDERR),
+        导致 task_steps 表里看不到崩溃痕迹, 用户调试时无从下手。
+
+        新实现:
+        - step 级 ERROR(payload.step_index 非空): 与旧逻辑一致, 写 step_index 行
+        - task 级 ERROR(payload.step_index 为空): 用 TASK_LEVEL_STEP_INDEX(-1)
+          写一行, action=error_type, result 标记 is_task_level=True
+        """
         payload = event.payload
         step_index = payload.get("step_index")
-        if step_index is None:
-            return  # 非步骤级错误(如系统级), 跳过
-
         error_type = payload.get("error_type", "")
         message = payload.get("message", "")
 
@@ -121,12 +133,23 @@ class TimelineRecorder:
             "retryable": payload.get("retryable", False),
         }
 
-        await self._write_step(
-            task_id=event.task_id,
-            step_index=step_index,
-            action=error_type,  # 用 error_type 作为 action 标识
-            result=result,
-        )
+        if step_index is None:
+            # Task 级错误: 不绑定具体 step, 用 -1 作为 sentinel
+            # 前端按 step_index 排序时会排在 step 0 之前, 视觉上"系统错误置顶"
+            result["is_task_level"] = True
+            await self._write_step(
+                task_id=event.task_id,
+                step_index=TASK_LEVEL_STEP_INDEX,
+                action=error_type or "TASK_ERROR",
+                result=result,
+            )
+        else:
+            await self._write_step(
+                task_id=event.task_id,
+                step_index=step_index,
+                action=error_type,  # 用 error_type 作为 action 标识
+                result=result,
+            )
 
     async def _on_state_changed(self, event: RuntimeEvent) -> None:
         """同步任务状态到 tasks 表"""

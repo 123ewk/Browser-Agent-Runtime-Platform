@@ -1,9 +1,14 @@
-"""任务 API —— 创建任务 + WebSocket 事件流 + 状态查询
+"""任务 API —— 创建任务 + WebSocket 事件流 + 状态查询 + 任务控制
 
-V1 只做最简接口:
-  POST /tasks          — 创建任务(goal 文本),返回 task_id
-  GET  /tasks/{id}     — 查询任务状态
-  WS   /tasks/{id}/ws  — WebSocket 事件流
+V1 接口:
+  POST /tasks                  — 创建任务(goal 文本),返回 task_id
+  GET  /tasks/{id}             — 查询任务状态
+  GET  /tasks/{id}/timeline    — 查询任务时间轴
+  POST /tasks/{id}/messages    — 发送人工确认/反馈(CONTINUE/REJECT)
+  POST /tasks/{id}/stop        — 停止任务(CANCELLED)
+  POST /tasks/{id}/pause       — 暂停任务(PAUSED,V1 Worker 退出, V2 支持续跑)
+  POST /tasks/{id}/resume      — 继续任务(RUNNING,V1 仅状态恢复)
+  WS   /tasks/{id}/ws          — WebSocket 事件流
 """
 
 from __future__ import annotations
@@ -29,7 +34,13 @@ from app.runtime.task_runner import BrowserTaskRunner, TaskContext
 from app.runtime.task_state import TaskStateManager
 from app.runtime.trajectory import Trajectory
 from app.runtime.ws_manager import WebSocketManager
-from app.schema.task import TaskCreate, TaskMessageCreate, TaskMessageOut, TaskOut
+from app.schema.task import (
+    TaskActionResponse,
+    TaskCreate,
+    TaskMessageCreate,
+    TaskMessageOut,
+    TaskOut,
+)
 from app.schema.task_step import TaskStepOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -45,6 +56,11 @@ _timeline_recorder: object | None = None  # TimelineRecorder 实例(在 init 中
 # 活跃的 runner 字典 —— 按 task_id 索引,支持多任务并发(M6 修复)
 # V1 简单 in-memory 存储,进程重启会丢;V2 引入持久化或 Redis 存储
 _active_runners: dict[str, BrowserTaskRunner] = {}
+
+
+def _new_cmd_id() -> str:
+    """生成唯一命令 ID(模块级,供 stop/pause/resume + _run_task 共用)"""
+    return f"cmd-{uuid4().hex[:12]}"
 
 
 def init_policy_engine(llm_provider: ChatLLM) -> None:
@@ -403,6 +419,221 @@ async def send_task_message(
     )
 
 
+# ═══════════════════════════════════════════════════════════════
+# 任务控制端点 —— 停止 / 暂停 / 继续
+#
+# 设计要点(2026-06-10 新增):
+# - 解决"任务卡死时用户无法从 UI 控制"的逃生通道
+# - 三个接口都是幂等的(对终态任务调用返回 accepted=False, 不抛错)
+# - 状态转换合法性由 TaskStateManager 校验(走标准 transition() 路径)
+# - stop 发送 CommandType.STOP 给 Worker,Worker 优雅退出
+# - pause 发送 CommandType.STOP 但状态停留在 PAUSED(不转 STOPPING, 保留 resume 机会)
+# - resume 当前 V1 只做状态机恢复(PAUSED→RUNNING);真正的 Worker 重启是 V2 工作
+# ═══════════════════════════════════════════════════════════════
+
+
+@router.post("/{task_id}/stop", response_model=TaskActionResponse)
+async def stop_task(
+    task_id: str,
+    user_id: UUID = Depends(get_current_user_id),
+) -> TaskActionResponse:
+    """停止任务 —— 终止 Worker,任务转为 CANCELLED
+
+    行为:
+    1. RUNNING/WAITING_CONFIRM/PAUSED → STOPPING → CANCELLED(标准路径)
+    2. 终态任务调用 → accepted=False,不抛错(幂等)
+    3. 找到活跃 runner 时发送 STOP 命令;没找到时只更新状态(Worker 可能已死)
+
+    为什么不抛 404: 用户视角下"任务已经结束"和"任务不存在"在 UI 上难以区分,
+    且从 dashboard 列表里看到的 task_id 一定存在 —— 终态路径已覆盖多数情况。
+    """
+    _ = user_id  # 当前版本不做所有权校验,后续接 ownership 时再启用
+    current = _task_state_mgr.get_state(task_id)
+
+    # 终态: 幂等返回
+    if current in (
+        TaskState.CANCELLED,
+        TaskState.COMPLETED,
+        TaskState.FAILED,
+    ):
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"任务已处于终态 ({current.value})",
+        )
+
+    # 走标准路径 STOPPING → CANCELLED
+    # InvalidTransitionError 由 TaskStateManager 内部处理(已经在转换表内)
+    runner = _active_runners.get(task_id)
+    target_state = TaskState.STOPPING
+    try:
+        await _task_state_mgr.transition(task_id, target_state, "用户主动停止")
+    except Exception as e:
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"状态转换失败: {e}",
+        )
+
+    # 通知 Worker 退出(在状态转换后发,避免 Worker 收到 STOP 但状态机还没准备好)
+    if runner is not None:
+        try:
+            await runner.send_command(
+                Command(
+                    command_id=_new_cmd_id(),
+                    type=CommandType.STOP,
+                    payload={"reason": "user_requested"},
+                )
+            )
+        except Exception:
+            log.warning("stop.send_command_failed", task_id=task_id, exc_info=True)
+
+    log.info("task.stop_accepted", task_id=task_id, prev_state=current.value)
+    return TaskActionResponse(
+        task_id=task_id,
+        state=TaskState.STOPPING.value,
+        accepted=True,
+    )
+
+
+@router.post("/{task_id}/pause", response_model=TaskActionResponse)
+async def pause_task(
+    task_id: str,
+    user_id: UUID = Depends(get_current_user_id),
+) -> TaskActionResponse:
+    """暂停任务 —— RUNNING/WAITING_CONFIRM → PAUSED,Worker 收到 STOP 退出
+
+    V1 实现范围:
+    - 状态机:支持 RUNNING/WAITING_CONFIRM → PAUSED
+    - Worker:Worker 收到 STOP 后会退出(因为 Worker 暂未实现 PAUSE 协议)
+    - 因此 PAUSED 状态表示"用户希望暂停",Worker 实际已退出
+    - 真正的"保留 Worker 进程 / 续跑"是 V2 范围,需配合 Checkpoint 持久化
+
+    V2 TODO:
+    - Worker 实现 PAUSE 命令处理(挂起当前 step,保留内存状态)
+    - 持久化 Checkpoint,resume 时拉起新 Worker 续跑
+    """
+    _ = user_id
+    current = _task_state_mgr.get_state(task_id)
+
+    # 终态 / 已暂停:幂等返回
+    if current in (
+        TaskState.CANCELLED,
+        TaskState.COMPLETED,
+        TaskState.FAILED,
+    ):
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"任务已处于终态 ({current.value})",
+        )
+    if current == TaskState.PAUSED:
+        return TaskActionResponse(
+            task_id=task_id,
+            state=TaskState.PAUSED.value,
+            accepted=False,
+            reason="任务已经处于 PAUSED 状态",
+        )
+
+    # 合法转换: RUNNING/WAITING_CONFIRM → PAUSED
+    try:
+        await _task_state_mgr.transition(task_id, TaskState.PAUSED, "用户暂停任务")
+    except Exception as e:
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"状态转换失败: {e}",
+        )
+
+    # 通知 Worker 退出(V1:Worker 不支持 PAUSE,所以"暂停"= "停止" + 保留状态)
+    runner = _active_runners.get(task_id)
+    if runner is not None:
+        try:
+            await runner.send_command(
+                Command(
+                    command_id=_new_cmd_id(),
+                    type=CommandType.STOP,
+                    payload={"reason": "user_paused"},
+                )
+            )
+        except Exception:
+            log.warning("pause.send_command_failed", task_id=task_id, exc_info=True)
+
+    log.info("task.pause_accepted", task_id=task_id, prev_state=current.value)
+    return TaskActionResponse(
+        task_id=task_id,
+        state=TaskState.PAUSED.value,
+        accepted=True,
+    )
+
+
+@router.post("/{task_id}/resume", response_model=TaskActionResponse)
+async def resume_task(
+    task_id: str,
+    user_id: UUID = Depends(get_current_user_id),
+) -> TaskActionResponse:
+    """继续任务 —— PAUSED → RUNNING
+
+    V1 实现范围:
+    - 状态机:支持 PAUSED → RUNNING
+    - Worker:V1 **不会**自动拉起新 Worker(需 Checkpoint 协议,见 pause V2 TODO)
+    - 前端在 PAUSED 状态下点"继续"只更新状态机,需要用户主动发新指令才会动
+
+    V2 TODO:
+    - 加载 Checkpoint,创建新 BrowserTaskRunner 续跑
+    - 现状对用户透明:前端按钮在 PAUSED 时显示"继续"和"停止",点"继续"后
+      可继续用 ChatInput 发送新指令作为"新目标",但 Worker 已退出的情况下
+      Agent 不会继续执行原目标。
+    """
+    _ = user_id
+    current = _task_state_mgr.get_state(task_id)
+
+    # 终态:不接受
+    if current in (
+        TaskState.CANCELLED,
+        TaskState.COMPLETED,
+        TaskState.FAILED,
+    ):
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"任务已处于终态,无法继续 ({current.value})",
+        )
+
+    # 非 PAUSED: 不接受(避免把 RUNNING 又切回 RUNNING)
+    if current != TaskState.PAUSED:
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"仅 PAUSED 状态可以 resume,当前 {current.value}",
+        )
+
+    # PAUSED → RUNNING
+    try:
+        await _task_state_mgr.transition(task_id, TaskState.RUNNING, "用户继续任务")
+    except Exception as e:
+        return TaskActionResponse(
+            task_id=task_id,
+            state=current.value,
+            accepted=False,
+            reason=f"状态转换失败: {e}",
+        )
+
+    log.info("task.resume_accepted", task_id=task_id, prev_state=current.value)
+    return TaskActionResponse(
+        task_id=task_id,
+        state=TaskState.RUNNING.value,
+        accepted=True,
+        reason="V1 状态机已恢复,Worker 续跑需 V2 Checkpoint 协议",
+    )
+
+
 @router.get("/{task_id}")
 async def get_task(
     task_id: str,
@@ -606,9 +837,6 @@ async def _run_task(
             # 加载失败不阻断任务,继续不带偏好执行
         finally:
             await session.close()
-
-    def _new_cmd_id() -> str:
-        return f"cmd-{uuid4().hex[:12]}"
 
     # ── 事件处理内联函数(必须 async,EventBus 类型签名要求) ──
     async def _on_step_complete(event: RuntimeEvent) -> None:

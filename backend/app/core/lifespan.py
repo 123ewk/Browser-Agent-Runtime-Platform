@@ -51,6 +51,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("timeline_recorder.init_failed", exc_info=True)
 
+    # Rehydrate TaskStateManager (2026-06-10 bug 修复):
+    # 进程启动时从 DB 重建内存状态,避免 /tasks/{id} 返回 PENDING(默认值)
+    from app.api.tasks import get_task_state_manager
+    from app.runtime.rehydrate import rehydrate_task_states
+
+    try:
+        rehydrated = await rehydrate_task_states(deps.pg, get_task_state_manager())
+        log.info("rehydrate.completed", count=rehydrated)
+        await get_task_state_manager().start_watchdog()
+        log.info("watchdog.started")
+    except Exception:
+        log.warning("rehydrate.init_failed", exc_info=True)
+
     # 初始化 PreferenceExtractor (长期记忆: LLM 压缩用户偏好)
     from app.api.preferences import init_preference_extractor
 
@@ -66,6 +79,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 关闭: 逆序释放,每个包裹 try/except
     log.info("lifespan.shutdown.begin")
+
+    # 停止 watchdog(在释放 pg 之前,避免 force_fail 触发 DB 写)
+    from app.api.tasks import get_task_state_manager
+
+    try:
+        await get_task_state_manager().stop_watchdog()
+    except Exception:
+        log.exception("watchdog.stop_failed")
+
     for name, close_fn in [
         ("llm", deps.llm.aclose),
         ("s3", deps.s3.aclose),

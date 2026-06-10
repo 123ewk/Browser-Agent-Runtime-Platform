@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import uuid
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model import Task
+from app.runtime.protocol.types import TaskState
 from app.schema.task import TaskCreate, TaskListResponse, TaskOut, TaskUpdate
+
+logger = structlog.get_logger(__name__)
+
+# 白名单: 与 alembic 迁移 4f8a2c1b3d5e 的 CHECK 约束保持同步
+# 修改时必须同步: app/runtime/protocol/types.py TaskState + alembic 迁移
+_ALLOWED_STATUSES: frozenset[str] = frozenset(s.value for s in TaskState)
 
 
 class TaskRepository:
@@ -71,6 +79,17 @@ class TaskRepository:
         if task is None:
             return None
         if dto.status is not None:
+            # 白名单校验: 拒绝非 enum 值, 防止脏数据写入 DB
+            # (DB 层 CHECK 约束是最后防线, 应用层校验先拦一次给清晰错误)
+            if dto.status not in _ALLOWED_STATUSES:
+                logger.warning(
+                    "task.update_status.rejected_invalid_status",
+                    task_id=str(id),
+                    attempted_status=dto.status,
+                )
+                raise ValueError(
+                    f"非法的 status 值: {dto.status!r}, " f"允许值: {sorted(_ALLOWED_STATUSES)}"
+                )
             task.status = dto.status
         if dto.result is not None:
             task.result = dto.result

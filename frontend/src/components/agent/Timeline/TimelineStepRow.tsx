@@ -7,9 +7,17 @@ interface TimelineStepRowProps {
   readonly event: RuntimeEvent;
 }
 
-/** 格式化 ISO 时间为 HH:MM:SS */
-function formatTime(isoTs: string): string {
+/** 格式化 ISO 时间为 HH:MM:SS
+
+2026-06-10 bug 修复:
+WS 事件 ts 字段缺失/非法(后端 Pydantic 序列化不一致、字段重命名等)
+会导致 new Date("") 返回 Invalid Date, toLocaleTimeString 返回 "Invalid Date"。
+统一降级为 "—", 避免在 timeline 里出现 "Invalid Date" 字样。
+*/
+function formatTime(isoTs: string | null | undefined): string {
+  if (!isoTs) return "—";
   const d = new Date(isoTs);
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
