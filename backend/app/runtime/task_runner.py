@@ -103,6 +103,8 @@ class BrowserTaskRunner:
         # 进程状态
         self._process: asyncio.subprocess.Process | None = None
         self._task_id: str | None = None
+        # 保存 user_id 用于 stderr 日志命名(开发阶段排查时方便区分"哪个用户的哪个任务")
+        self._user_id: UUID | None = None
 
         # 同步原语
         self._ready_event = asyncio.Event()
@@ -139,6 +141,8 @@ class BrowserTaskRunner:
             raise WorkerLaunchError("Worker 已在运行,不能重复启动")
 
         self._task_id = context.task_id
+        # 记录 user_id, 供 stderr 日志文件命名区分
+        self._user_id = context.user_id
         self._ready_event.clear()
 
         # 确保 stderr 目录存在
@@ -399,7 +403,14 @@ class BrowserTaskRunner:
         assert self._process is not None
         assert self._process.stderr is not None
 
-        stderr_path = self._stderr_dir / f"worker-{self._task_id or 'unknown'}.log"
+        # 日志文件名: 加上日期 + 用户 + 任务短 id, 开发阶段肉眼能一眼分清"谁的哪个任务"
+        # - 日期粒度到日, 单用户多次重跑不撞名(任务短 id 区分)
+        # - user_id 取前 8 位, UUID 全量在路径里会让 ls 列表太宽
+        # - 缺失字段统一 unknown, 防止 None 出现在文件名里
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        user_str = str(self._user_id)[:8] if self._user_id else "unknown"
+        task_str = (self._task_id or "unknown")[:8]
+        stderr_path = self._stderr_dir / f"worker-{date_str}-{user_str}-{task_str}.log"
 
         # 在线程池中打开文件,避免阻塞事件循环
         f = await asyncio.to_thread(open, stderr_path, "a", encoding="utf-8")
