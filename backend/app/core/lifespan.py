@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("timeline_recorder.init_failed", exc_info=True)
 
+    # 初始化 CheckpointManager (Phase 1.5 P0: Checkpoint 生命周期管理)
+    from app.api.tasks import init_checkpoint_manager
+
+    try:
+        init_checkpoint_manager(deps.pg)
+        log.info("checkpoint_manager.initialized")
+    except Exception:
+        log.warning("checkpoint_manager.init_failed", exc_info=True)
+
     # Rehydrate TaskStateManager (2026-06-10 bug 修复):
     # 进程启动时从 DB 重建内存状态,避免 /tasks/{id} 返回 PENDING(默认值)
     from app.api.tasks import get_task_state_manager

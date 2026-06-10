@@ -3,7 +3,15 @@
 禁止反向依赖:api → service → repository → model。
 """
 
-from app.schema.checkpoint import CheckpointOut
+from app.schema.checkpoint import (
+    CheckpointMetaSchema,
+    CheckpointOut,
+    FullCheckpointState,
+    MemoryStateSchema,
+    StepStateSchema,
+    TaskStateSchema,
+    WorkerRuntimeSchema,
+)
 from app.schema.health import HealthResponse, ReadyResponse
 from app.schema.task import (
     TaskActionResponse,
@@ -40,6 +48,12 @@ __all__ = [
     "TaskListResponse",
     "TaskStepOut",
     "CheckpointOut",
+    "FullCheckpointState",
+    "TaskStateSchema",
+    "StepStateSchema",
+    "MemoryStateSchema",
+    "WorkerRuntimeSchema",
+    "CheckpointMetaSchema",
     "PreferenceCreate",
     "PreferenceOut",
     "PreferenceUpdate",

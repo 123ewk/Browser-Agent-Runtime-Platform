@@ -26,6 +26,7 @@ from app.infra.llm import ChatLLM
 from app.infra.postgres import PostgresClient
 from app.repository.task import TaskRepository
 from app.repository.task_step import TaskStepRepository
+from app.runtime.checkpoint_manager import CheckpointManager
 from app.runtime.event_bus import EventBus
 from app.runtime.policy_engine import PolicyEngine
 from app.runtime.protocol.schemas import ActionDetail, Command, RuntimeEvent
@@ -34,6 +35,7 @@ from app.runtime.task_runner import BrowserTaskRunner, TaskContext
 from app.runtime.task_state import TaskStateManager
 from app.runtime.trajectory import Trajectory
 from app.runtime.ws_manager import WebSocketManager
+from app.schema.checkpoint import FullCheckpointState
 from app.schema.task import (
     TaskActionResponse,
     TaskCreate,
@@ -53,6 +55,7 @@ _ws_manager = WebSocketManager(_event_bus)
 _policy_engine: PolicyEngine | None = None
 _pg_client: PostgresClient | None = None
 _timeline_recorder: object | None = None  # TimelineRecorder 实例(在 init 中赋值)
+_checkpoint_manager: CheckpointManager | None = None  # CheckpointManager 实例
 # 活跃的 runner 字典 —— 按 task_id 索引,支持多任务并发(M6 修复)
 # V1 简单 in-memory 存储,进程重启会丢;V2 引入持久化或 Redis 存储
 _active_runners: dict[str, BrowserTaskRunner] = {}
@@ -84,6 +87,18 @@ def init_timeline_recorder(pg: PostgresClient) -> None:
     log.info("timeline_recorder.initialized")
 
 
+def init_checkpoint_manager(pg: PostgresClient) -> None:
+    """初始化 CheckpointManager —— 在 lifespan startup 后调用
+
+    CheckpointManager 订阅 EventBus 的 ERROR / TASK_FINISHED / NEED_CONFIRM,
+    在这些事件发生时自动保存 checkpoint。
+    """
+    global _checkpoint_manager
+    _checkpoint_manager = CheckpointManager(_event_bus, pg, _task_state_mgr)
+    asyncio.create_task(_checkpoint_manager.subscribe_all())
+    log.info("checkpoint_manager.initialized")
+
+
 def get_event_bus() -> EventBus:
     return _event_bus
 
@@ -94,6 +109,11 @@ def get_task_state_manager() -> TaskStateManager:
 
 def get_ws_manager() -> WebSocketManager:
     return _ws_manager
+
+
+def get_checkpoint_manager() -> CheckpointManager | None:
+    """获取 CheckpointManager 实例(用于生命周期管理)"""
+    return _checkpoint_manager
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -614,7 +634,7 @@ async def resume_task(
             reason=f"仅 PAUSED 状态可以 resume,当前 {current.value}",
         )
 
-    # PAUSED → RUNNING
+    # PAUSED → RUNNING(先转换再启动 Worker)
     try:
         await _task_state_mgr.transition(task_id, TaskState.RUNNING, "用户继续任务")
     except Exception as e:
@@ -625,12 +645,59 @@ async def resume_task(
             reason=f"状态转换失败: {e}",
         )
 
+    # 从 checkpoint 加载目标并拉起新 Worker
+    if _checkpoint_manager is not None:
+        try:
+            task_uuid = UUID(task_id)
+        except ValueError:
+            return TaskActionResponse(
+                task_id=task_id,
+                state=TaskState.RUNNING.value,
+                accepted=False,
+                reason="无效 task_id 格式",
+            )
+
+        resume_state = await _checkpoint_manager.resume_from_latest(task_uuid)
+        if resume_state is None:
+            log.warning("resume.no_checkpoint", task_id=task_id)
+            return TaskActionResponse(
+                task_id=task_id,
+                state=TaskState.RUNNING.value,
+                accepted=True,
+                reason="状态已恢复,但无 checkpoint,Worker 需手动触发",
+            )
+
+        # 重建 TaskContext
+        context = TaskContext(
+            task_id=task_id,
+            goal=resume_state.task.goal,
+            skill="browser",
+            user_id=user_id,
+        )
+
+        runner = BrowserTaskRunner(_event_bus)
+        _active_runners[task_id] = runner
+        asyncio.create_task(_run_task(runner, context, task_id, resume_state=resume_state))
+
+        log.info(
+            "task.resume_with_checkpoint",
+            task_id=task_id,
+            step=resume_state.task.current_step_index,
+        )
+        return TaskActionResponse(
+            task_id=task_id,
+            state=TaskState.RUNNING.value,
+            accepted=True,
+            reason=f"从 checkpoint 恢复,继续执行: {resume_state.task.goal[:50]}",
+        )
+
+    # 无 CheckpointManager: 仅状态恢复
     log.info("task.resume_accepted", task_id=task_id, prev_state=current.value)
     return TaskActionResponse(
         task_id=task_id,
         state=TaskState.RUNNING.value,
         accepted=True,
-        reason="V1 状态机已恢复,Worker 续跑需 V2 Checkpoint 协议",
+        reason="状态已恢复,但 CheckpointManager 未就绪",
     )
 
 
@@ -798,6 +865,7 @@ async def _run_task(
     runner: BrowserTaskRunner,
     context: TaskContext,
     task_id: str,
+    resume_state: FullCheckpointState | None = None,
 ) -> None:
     """后台执行循环: STEP_COMPLETE → PolicyEngine.decide → CONTINUE, 直到终止
 
@@ -808,6 +876,8 @@ async def _run_task(
     - 连续 3 次错误(不可恢复)
     - Worker TASK_FINISHED(正常/异常结束)
     - 总超时
+
+    resume_state: 从 checkpoint 恢复时传入,用于预填充 trajectory
     """
     MAX_CONSECUTIVE_ERRORS = 3
     MAX_SAME_ACTION = 3
@@ -837,6 +907,15 @@ async def _run_task(
             # 加载失败不阻断任务,继续不带偏好执行
         finally:
             await session.close()
+
+    # Resume: 从 checkpoint 恢复 trajectory 步数
+    if resume_state is not None:
+        trajectory.step_index = resume_state.task.current_step_index
+        log.info(
+            "task.resume_trajectory",
+            task_id=task_id,
+            step_index=trajectory.step_index,
+        )
 
     # ── 事件处理内联函数(必须 async,EventBus 类型签名要求) ──
     async def _on_step_complete(event: RuntimeEvent) -> None:
@@ -894,6 +973,24 @@ async def _run_task(
                     title=payload.get("title"),
                     summary=payload.get("summary", ""),
                 )
+
+                # Checkpoint: 判定是否保存当前进度(定期存 + 关键操作)
+                if _checkpoint_manager is not None:
+                    from app.runtime.checkpoint_manager import CheckpointManager
+
+                    action_type = payload.get("action", "")
+                    if CheckpointManager.should_save_on_step(step_index, action_type):
+                        await _checkpoint_manager.save_task_checkpoint(
+                            task_id=task_id,
+                            goal=context.goal,
+                            step_index=step_index,
+                            trajectory_summary=trajectory.summary_for_prompt(),
+                            checkpoint_type="auto",
+                            action_result=payload.get("summary", ""),
+                            action_url=payload.get("url"),
+                            page_title=payload.get("title"),
+                            preferences=user_prefs,
+                        )
 
                 # 检查 max_steps 硬上限
                 if step_index >= context.max_steps:
