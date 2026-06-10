@@ -60,6 +60,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("checkpoint_manager.init_failed", exc_info=True)
 
+    # 初始化 ProcessWatchdog (Phase 1.5: 基于心跳的 Worker 存活监控)
+    from app.api.tasks import init_watchdog
+
+    try:
+        init_watchdog()
+        log.info("watchdog.initialized")
+    except Exception:
+        log.warning("watchdog.init_failed", exc_info=True)
+
     # Rehydrate TaskStateManager (2026-06-10 bug 修复):
     # 进程启动时从 DB 重建内存状态,避免 /tasks/{id} 返回 PENDING(默认值)
     from app.api.tasks import get_task_state_manager
@@ -89,13 +98,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 关闭: 逆序释放,每个包裹 try/except
     log.info("lifespan.shutdown.begin")
 
-    # 停止 watchdog(在释放 pg 之前,避免 force_fail 触发 DB 写)
-    from app.api.tasks import get_task_state_manager
+    # 停止 rehydrate watchdog + 进程心跳 watchdog(在释放 pg 之前)
+    from app.api.tasks import get_task_state_manager, get_watchdog
 
     try:
         await get_task_state_manager().stop_watchdog()
     except Exception:
-        log.exception("watchdog.stop_failed")
+        log.exception("rehydrate_watchdog.stop_failed")
+
+    try:
+        wd = get_watchdog()
+        if wd is not None:
+            await wd.stop()
+    except Exception:
+        log.exception("process_watchdog.stop_failed")
 
     for name, close_fn in [
         ("llm", deps.llm.aclose),

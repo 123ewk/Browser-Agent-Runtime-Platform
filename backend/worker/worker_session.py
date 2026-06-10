@@ -40,6 +40,7 @@ from app.runtime.protocol.types import CommandType, EventType, TaskResult
 from app.runtime.trajectory import Trajectory
 
 from .browser_manager import BrowserManager
+from .heartbeat_sender import HeartbeatSender
 from .skill import BrowserSkill, SkillRegistry
 from .stdin_listener import StdinListener
 from .stdout_emitter import emit_event
@@ -66,6 +67,7 @@ class WorkerSession:
         self._step_count = 0
         self._goal = ""
         self._max_steps = 20
+        self._heartbeat_sender = HeartbeatSender(task_id)
 
     async def run(self) -> None:
         """Worker 主循环
@@ -75,6 +77,9 @@ class WorkerSession:
         3. START 后启用 idle timeout(V1 兜底),CONTINUE/STOP 在同一循环内处理
         4. STOP → TASK_FINISHED
         """
+        # 在 READY 之前启动心跳发送,确保 Runtime 侧 Watchdog 尽早开始监控
+        self._heartbeat_sender.start()
+
         emit_event(
             RuntimeEvent(
                 event_id=_new_event_id(),
@@ -190,6 +195,7 @@ class WorkerSession:
                 retryable=False,
             )
         finally:
+            await self._heartbeat_sender.stop()
             listener.stop()
 
     # ═══════════════════════════════════════════════════════════

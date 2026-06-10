@@ -146,10 +146,19 @@ class TaskStateChangedPayload(BaseModel):
 
 
 class WatchdogTimeoutPayload(BaseModel):
-    """WATCHDOG_TIMEOUT 事件的 payload —— 心跳超时"""
+    """WATCHDOG_TIMEOUT 事件的 payload —— 心跳超时
+
+    携带超时任务的完整上下文,供消费方(EventBus subscriber)做出正确决策:
+    - task_id / worker_pid: 确定是哪个 Worker 超时
+    - last_heartbeat_seq / seconds_since_last: 超时严重程度
+    - status_at_last: 超时前 Worker 状态("是否正在执行关键操作")
+    """
 
     last_heartbeat_seq: int
     seconds_since_last: float
+    task_id: str = ""
+    worker_pid: int | None = None
+    status_at_last: str = "unknown"
 
 
 # ═══════════════════════════════════════════════════════════════

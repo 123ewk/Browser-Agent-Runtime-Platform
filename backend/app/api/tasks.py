@@ -34,6 +34,7 @@ from app.runtime.protocol.types import CommandType, EventType, TaskState
 from app.runtime.task_runner import BrowserTaskRunner, TaskContext
 from app.runtime.task_state import TaskStateManager
 from app.runtime.trajectory import Trajectory
+from app.runtime.watchdog import ProcessWatchdog
 from app.runtime.ws_manager import WebSocketManager
 from app.schema.checkpoint import FullCheckpointState
 from app.schema.task import (
@@ -56,6 +57,7 @@ _policy_engine: PolicyEngine | None = None
 _pg_client: PostgresClient | None = None
 _timeline_recorder: object | None = None  # TimelineRecorder 实例(在 init 中赋值)
 _checkpoint_manager: CheckpointManager | None = None  # CheckpointManager 实例
+_watchdog: ProcessWatchdog | None = None  # ProcessWatchdog 实例
 # 活跃的 runner 字典 —— 按 task_id 索引,支持多任务并发(M6 修复)
 # V1 简单 in-memory 存储,进程重启会丢;V2 引入持久化或 Redis 存储
 _active_runners: dict[str, BrowserTaskRunner] = {}
@@ -116,6 +118,25 @@ def get_checkpoint_manager() -> CheckpointManager | None:
     return _checkpoint_manager
 
 
+def init_watchdog() -> ProcessWatchdog:
+    """初始化 ProcessWatchdog —— 在 lifespan startup 后调用
+
+    Watchdog 订阅 WORKER_HEARTBEAT 事件,并启动后台扫描协程。
+    所有 BrowserTaskRunner 共享同一个 watchdog 实例。
+    """
+    global _watchdog
+    _watchdog = ProcessWatchdog(_event_bus)
+    _event_bus.subscribe(EventType.WORKER_HEARTBEAT, _watchdog.on_heartbeat)
+    _watchdog.start()
+    log.info("watchdog.initialized")
+    return _watchdog
+
+
+def get_watchdog() -> ProcessWatchdog | None:
+    """获取 ProcessWatchdog 实例(用于注入到 BrowserTaskRunner)"""
+    return _watchdog
+
+
 # ═══════════════════════════════════════════════════════════════
 # REST 端点
 # ═══════════════════════════════════════════════════════════════
@@ -171,7 +192,7 @@ async def create_task(
     await _task_state_mgr.transition(task_id, TaskState.RUNNING, f"开始执行: {payload.goal}")
 
     # 启动 Worker —— 多任务并发:每个 task_id 独立 runner,登记到字典
-    runner = BrowserTaskRunner(_event_bus)
+    runner = BrowserTaskRunner(_event_bus, watchdog=_watchdog)
     _active_runners[task_id] = runner
 
     context = TaskContext(
@@ -675,7 +696,7 @@ async def resume_task(
             user_id=user_id,
         )
 
-        runner = BrowserTaskRunner(_event_bus)
+        runner = BrowserTaskRunner(_event_bus, watchdog=_watchdog)
         _active_runners[task_id] = runner
         asyncio.create_task(_run_task(runner, context, task_id, resume_state=resume_state))
 
@@ -930,10 +951,15 @@ async def _run_task(
         if event.task_id == task_id:
             await event_queue.put(event)
 
+    async def _on_watchdog_timeout(event: RuntimeEvent) -> None:
+        if event.task_id == task_id:
+            await event_queue.put(event)
+
     # 先订阅再启动(防竞态)
     _event_bus.subscribe(EventType.STEP_COMPLETE, _on_step_complete)
     _event_bus.subscribe(EventType.ERROR, _on_error)
     _event_bus.subscribe(EventType.TASK_FINISHED, _on_task_finished)
+    _event_bus.subscribe(EventType.WATCHDOG_TIMEOUT, _on_watchdog_timeout)
 
     try:
         await runner.start_task(context)
@@ -1117,6 +1143,31 @@ async def _run_task(
                     )
                 )
 
+            elif event.event == EventType.WATCHDOG_TIMEOUT:
+                payload = event.payload
+                log.error(
+                    "task.watchdog_timeout",
+                    task_id=task_id,
+                    last_seq=payload.get("last_heartbeat_seq"),
+                    seconds_since_last=payload.get("seconds_since_last"),
+                )
+                result_state = TaskState.FAILED
+                result_reason = "Worker 心跳超时,进程可能死锁"
+
+                # 超时前保存 checkpoint(标记 error 类型,可供人工恢复)
+                if _checkpoint_manager is not None:
+                    from app.runtime.checkpoint_manager import CheckpointManager
+
+                    await _checkpoint_manager.save_task_checkpoint(
+                        task_id=task_id,
+                        goal=context.goal,
+                        step_index=trajectory.step_index,
+                        trajectory_summary=trajectory.summary_for_prompt(),
+                        checkpoint_type="error",
+                        action_result="任务因心跳超时强制结束",
+                    )
+                break
+
             elif event.event == EventType.TASK_FINISHED:
                 payload = event.payload
                 status = payload.get("status", "failed")
@@ -1145,5 +1196,6 @@ async def _run_task(
         _event_bus.unsubscribe(EventType.STEP_COMPLETE, _on_step_complete)
         _event_bus.unsubscribe(EventType.ERROR, _on_error)
         _event_bus.unsubscribe(EventType.TASK_FINISHED, _on_task_finished)
+        _event_bus.unsubscribe(EventType.WATCHDOG_TIMEOUT, _on_watchdog_timeout)
         await runner.stop_task()
         _active_runners.pop(task_id, None)

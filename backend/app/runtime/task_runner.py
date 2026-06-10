@@ -38,6 +38,7 @@ from app.runtime.protocol.schemas import (
     StartPayload,
 )
 from app.runtime.protocol.types import CommandType, EventType
+from app.runtime.watchdog import ProcessWatchdog
 
 logger = structlog.get_logger(__name__)
 
@@ -93,8 +94,10 @@ class BrowserTaskRunner:
         worker_module: str = "worker.main",
         worker_cwd: str | None = None,
         stderr_dir: str | None = None,
+        watchdog: ProcessWatchdog | None = None,
     ) -> None:
         self._event_bus = event_bus
+        self._watchdog = watchdog
         self._worker_module = worker_module
         # worker_cwd 默认为 backend/ 目录(Worker 进程的工作目录)
         self._worker_cwd = worker_cwd or str(Path(__file__).resolve().parent.parent.parent)
@@ -172,6 +175,13 @@ class BrowserTaskRunner:
             task_id=context.task_id,
             pid=self._process.pid,
         )
+
+        # 向 Watchdog 注册该 Worker 的心跳监控
+        if self._watchdog is not None:
+            await self._watchdog.register(
+                task_id=context.task_id,
+                pid=self._process.pid,
+            )
 
         # 启动 4 个后台协程
         self._tasks = [
@@ -261,6 +271,10 @@ class BrowserTaskRunner:
 
     async def cleanup(self) -> None:
         """清理资源:发哨兵 → 取消协程 → 关闭进程"""
+        # 先通知 Watchdog 移除该 Worker 的心跳监控,防止超时误报
+        if self._watchdog is not None and self._task_id is not None:
+            await self._watchdog.unregister(self._task_id)
+
         # 发哨兵通知 stdin_writer 退出 —— 队列满说明 stdin_writer 已停,无需处理
         with contextlib.suppress(asyncio.QueueFull):
             self._command_queue.put_nowait(None)  # None = 哨兵

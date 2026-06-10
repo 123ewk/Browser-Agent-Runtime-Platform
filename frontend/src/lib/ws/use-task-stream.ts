@@ -58,8 +58,21 @@ export function useTaskStream(taskId: string | null): {
     const off = subscribeTaskStream(
       taskId,
       (event) => {
-        // 函数式更新: 基于最新 state 追加,避免闭包过期问题
-        setEvents((prev) => [...prev, event]);
+        // 事件入口做幂等 —— 把"重复 / 残缺事件"的脏数据挡在 state 之外
+        // 触发场景: WS 断线重连后,后端把累积事件按原 event_id 重推;
+        //          或 try/catch 解析分支漏掉 event_id 字段缺失的半条消息。
+        // 这两类都会让下游 Timeline 的 <TimelineStepRow key={e.event_id}> 报 unique-key 警告。
+        setEvents((prev) => {
+          // 防御 1: 缺 event_id 视为非法事件,丢弃(零信任:不依赖后端一定填)
+          if (!event.event_id) {
+            return prev;
+          }
+          // 防御 2: 同一 event_id 已存在则跳过(断线重连重推去重)
+          if (prev.some((p) => p.event_id === event.event_id)) {
+            return prev;
+          }
+          return [...prev, event];
+        });
       },
       () => setIsConnected(true),   // onConnect: WebSocket 真正建立后才标记已连接
       () => setIsConnected(false),  // onDisconnect
