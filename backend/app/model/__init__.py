@@ -6,6 +6,7 @@
 pgvector 扩展通过 Memory.embedding(Vector(1024)) 使用,迁移中手动创建。
 """
 
+from app.model.agent import Agent
 from app.model.base import Base, UUIDMixin
 from app.model.checkpoint import Checkpoint
 from app.model.memory import Memory
@@ -19,6 +20,7 @@ from app.model.user_preference import UserPreference
 __all__ = [
     "Base",
     "UUIDMixin",
+    "Agent",
     "User",
     "UserSession",
     "Task",

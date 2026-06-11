@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     browser_max_contexts: int = 10
     browser_context_idle_timeout: int = 300
 
+    # Agent 健康阈值(V2 起从此处读,调整时改 .env 即可,无需重新部署)
+    agent_health_degraded_failure_rate: float = 0.10  # 24h 失败率 ≥ 此值 → degraded
+    agent_health_down_failure_rate: float = 0.50  # 1h 失败率 ≥ 此值 → down
+    agent_health_inactive_days: int = 7  # 超过此天数无任务 → down
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

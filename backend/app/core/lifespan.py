@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     deps = await create_deps()
     app.state.deps = deps
 
+    # Seed 默认 agent(V2: 确保至少有一个 browser agent,幂等)
+    from app.scripts.seed_agents import seed_default_agent
+
+    try:
+        await seed_default_agent(deps.pg)
+        log.info("seed_agents.completed")
+    except Exception:
+        log.warning("seed_agents.failed", exc_info=True)
+
     # 初始化 PolicyEngine (Phase 2.1: LLM 策略引擎)
     from app.api.tasks import init_policy_engine
 
@@ -43,10 +52,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.warning("policy_engine.init_failed", exc_info=True)
 
     # 初始化 TimelineRecorder (Phase 1.5: 执行轨迹落库)
+    # 必须 await —— 同步订阅 EventBus,避免 create_task 异步启动时的竞态
+    # (2026-06-10 状态不更新 bug 的根因之一)
     from app.api.tasks import init_timeline_recorder
 
     try:
-        init_timeline_recorder(deps.pg)
+        await init_timeline_recorder(deps.pg)
         log.info("timeline_recorder.initialized")
     except Exception:
         log.warning("timeline_recorder.init_failed", exc_info=True)

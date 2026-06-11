@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field
 
 
 class TaskCreate(BaseModel):
-    """创建 DTO —— 用户只需要描述目标,user_id 从当前登录用户获取。"""
+    """创建 DTO —— 用户描述目标,可选指定 agent。"""
 
     goal: str = Field(min_length=1, max_length=2000)
+    agent_id: uuid.UUID | None = None  # V2 新增,不传则用 default agent
 
 
 class TaskUpdate(BaseModel):
@@ -36,6 +37,7 @@ class TaskOut(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    agent_id: uuid.UUID | None = None  # V2 新增,历史任务可能为 NULL(迁移前)
     goal: str
     status: str
     result: dict | None = None

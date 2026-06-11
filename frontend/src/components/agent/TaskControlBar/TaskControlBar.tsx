@@ -1,7 +1,7 @@
 "use client";
 
 import { Pause, Play, StopCircle, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAgentWorkspaceStore } from "@/lib/store/agent-workspace";
 import { useTask, usePauseTask, useResumeTask, useStopTask } from "@/lib/query/tasks";
 import type { TaskStatus } from "@/types/task";
@@ -38,6 +38,15 @@ const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
   "cancelled",
 ]);
 
+/** stopping 状态的最大展示时长 —— 超过则强制隐藏整条(前端兜底)
+ *
+ * 为什么需要: stopping → cancelled 由 Worker 收到 STOP 命令后推 TASK_FINISHED
+ * 完成转换。若 Worker 已死 / 命令丢失,后端不会推进状态,按钮永远卡在
+ * "停止中…" disabled,影响用户逃生体验。
+ * 30s 是经验值:Worker 正常收到 STOP → 退出 < 1s,30× 冗余足够覆盖。
+ */
+const STOPPING_TIMEOUT_MS = 30_000;
+
 export function TaskControlBar(): React.ReactElement | null {
   const activeId = useAgentWorkspaceStore((s) => s.activeTaskId);
   const { data: taskDetail } = useTask(activeId);
@@ -52,9 +61,35 @@ export function TaskControlBar(): React.ReactElement | null {
     null,
   );
 
+  // stopping 状态超时兜底 —— 记录进入 stopping 的时刻,30s 后强制置为"超时"
+  const [stoppingSince, setStoppingSince] = useState<number | null>(null);
+  const [stoppingTimedOut, setStoppingTimedOut] = useState(false);
+
+  // 跟踪 stopping 进入/退出
+  useEffect(() => {
+    if (taskStatus === "stopping" && stoppingSince === null) {
+      // 首次进入 stopping:记录时刻 + 启动 30s 超时
+      const t0 = Date.now();
+      setStoppingSince(t0);
+      setStoppingTimedOut(false);
+      const timer = setTimeout(() => {
+        setStoppingTimedOut(true);
+      }, STOPPING_TIMEOUT_MS);
+      return () => clearTimeout(timer);
+    }
+    if (taskStatus !== "stopping" && stoppingSince !== null) {
+      // 退出 stopping:重置
+      setStoppingSince(null);
+      setStoppingTimedOut(false);
+    }
+    return undefined;
+  }, [taskStatus, stoppingSince]);
+
   if (!activeId || !taskStatus) return null;
   if (TERMINAL_STATUSES.has(taskStatus)) return null;
   if (!ACTIONABLE_STATUSES.has(taskStatus)) return null;
+  // stopping 超时:前端兜底,强制隐藏整条(后端状态机可能已死锁)
+  if (taskStatus === "stopping" && stoppingTimedOut) return null;
 
   const anyPending =
     stopMut.isPending || pauseMut.isPending || resumeMut.isPending;

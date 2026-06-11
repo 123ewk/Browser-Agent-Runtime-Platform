@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user_id
 from app.core.security import decode_token
@@ -43,6 +44,7 @@ from app.schema.task import (
     TaskMessageCreate,
     TaskMessageOut,
     TaskOut,
+    TaskUpdate,
 )
 from app.schema.task_step import TaskStepOut
 
@@ -62,10 +64,75 @@ _watchdog: ProcessWatchdog | None = None  # ProcessWatchdog 实例
 # V1 简单 in-memory 存储,进程重启会丢;V2 引入持久化或 Redis 存储
 _active_runners: dict[str, BrowserTaskRunner] = {}
 
+# status 字段白名单 —— 用于 list_tasks 读路径的防御性过滤
+# 与 app/runtime/protocol/types.py TaskState 枚举 + alembic 迁移 4f8a2c1b3d5e CHECK 约束保持同步
+# 修改时必须同步更新: TaskState 枚举 + alembic 迁移 + 此常量
+_ALLOWED_STATUS_VALUES: frozenset[str] = frozenset(s.value for s in TaskState)
+
 
 def _new_cmd_id() -> str:
     """生成唯一命令 ID(模块级,供 stop/pause/resume + _run_task 共用)"""
     return f"cmd-{uuid4().hex[:12]}"
+
+
+async def _resolve_default_agent_id() -> UUID | None:
+    """解析默认 agent ID(V2 新增)
+
+    从 agents 表查 is_default=TRUE 的 agent,不存在返回 None。
+    """
+    from app.repository.agent import AgentRepository
+
+    if _pg_client is None:
+        return None
+    session = _pg_client.session()
+    try:
+        repo = AgentRepository(session)
+        agent = await repo.get_default()
+        await session.commit()
+        return agent.id if agent else None
+    except Exception:
+        await session.rollback()
+        log.warning("resolve_default_agent.failed", exc_info=True)
+        return None
+    finally:
+        await session.close()
+
+
+async def _resolve_single_agent_name(session: AsyncSession, agent_id: UUID | None) -> str:
+    """解析单个 agent 的 display_name(V2 新增)"""
+    if agent_id is None:
+        return "browser-agent"
+    from app.repository.agent import AgentRepository
+
+    try:
+        repo = AgentRepository(session)
+        agent = await repo.get_by_id(agent_id)
+        return agent.name if agent else "browser-agent"
+    except Exception:
+        return "browser-agent"
+
+
+async def _resolve_agent_name_map(
+    task_items: list[TaskOut],
+) -> dict[UUID, str]:
+    """批量获取 agent_id → display_name 映射,避免 N+1"""
+    from app.repository.agent import AgentRepository
+
+    agent_ids = [t.agent_id for t in task_items if t.agent_id is not None]
+    if not agent_ids or _pg_client is None:
+        return {}
+    session = _pg_client.session()
+    try:
+        repo = AgentRepository(session)
+        name_map = await repo.get_display_name_map(agent_ids)
+        await session.commit()
+        return name_map
+    except Exception:
+        await session.rollback()
+        log.warning("resolve_agent_names.failed", exc_info=True)
+        return {}
+    finally:
+        await session.close()
 
 
 def init_policy_engine(llm_provider: ChatLLM) -> None:
@@ -78,14 +145,23 @@ def init_policy_engine(llm_provider: ChatLLM) -> None:
     log.info("policy_engine.initialized")
 
 
-def init_timeline_recorder(pg: PostgresClient) -> None:
-    """初始化 TimelineRecorder + 存储 pg client 引用 —— 在 lifespan startup 后调用"""
+async def init_timeline_recorder(pg: PostgresClient) -> None:
+    """初始化 TimelineRecorder + 存储 pg client 引用 —— 在 lifespan startup 后调用
+
+    必须 await 同步订阅,而不是 create_task 异步启动 —— EventBus 是 in-memory
+    广播,没有重试/持久化:订阅时机晚于发布时机 = 永久丢失。
+    """
     from app.runtime.timeline_recorder import TimelineRecorder as TR
 
     global _pg_client, _timeline_recorder
     _pg_client = pg
     _timeline_recorder = TR(_event_bus, pg, _task_state_mgr)
-    asyncio.create_task(_timeline_recorder.start())
+    # 同步订阅:让 create_task / stop_task 等后续流程发布 TASK_STATE_CHANGED 时,
+    # TimelineRecorder._on_state_changed 一定已被注册,事件不会丢。
+    # 原来用 asyncio.create_task(_timeline_recorder.start()) 异步启动,在
+    # 启动竞争窗口(下一个 await 之前)发布的事件会丢失 —— 这是 2026-06-10
+    # 状态不更新 bug 的根因之一。
+    await _timeline_recorder.start()
     log.info("timeline_recorder.initialized")
 
 
@@ -172,12 +248,23 @@ async def create_task(
     # 生成 UUID task_id
     task_id = str(uuid4())
 
+    # 解析 agent_id(V2: 不传则用 default agent)
+    agent_id: UUID | None = payload.agent_id
+    if agent_id is None and _pg_client is not None:
+        agent_id = await _resolve_default_agent_id()
+        if agent_id is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                503, "No default agent available"
+            )  # 503: 服务不可用(配置缺失),与现有 infra 异常分类一致
+
     # 写入 tasks 表(TimelineRecorder 需要 FK 引用)
     if _pg_client is not None:
         session = _pg_client.session()
         try:
             repo = TaskRepository(session)
-            await repo.create(user_id, payload, task_id=UUID(task_id))
+            await repo.create(user_id, payload, task_id=UUID(task_id), agent_id=agent_id)
             await session.commit()
         except Exception:
             await session.rollback()
@@ -204,6 +291,11 @@ async def create_task(
             # 继续执行:Worker 有 _fallback_decide 兜底
 
     await _task_state_mgr.transition(task_id, TaskState.RUNNING, f"开始执行: {payload.goal}")
+    # 显式落库兜底:TimelineRecorder 异步订阅 EventBus 写 DB 有 100ms 量级延迟,
+    # 前端 5s 轮询在延迟窗口内会拉到旧值(pending),用户看到"刚创建 = 等待中"的
+    # 体验割裂。这里 transition 之后立刻同步写一次 DB,与 TimelineRecorder
+    # 双写是幂等的(白名单校验 + 仅 status 字段),不会冲突。
+    await _persist_status_to_db(task_id, TaskState.RUNNING)
 
     # 启动 Worker —— 多任务并发:每个 task_id 独立 runner,登记到字典
     runner = BrowserTaskRunner(_event_bus, watchdog=_watchdog)
@@ -260,17 +352,19 @@ async def list_tasks(
                 offset=(page - 1) * pageSize,
             )
             await session.commit()
+            # V2: 批量查 agent 展示名,替代硬编码 "browser-agent"
+            name_map = await _resolve_agent_name_map(result.items)
             return {
                 "items": [
-                    {
-                        "id": str(t.id),
-                        "goal": t.goal,
-                        "agentName": "browser-agent",
-                        "status": t.status,
-                        "createdAt": t.created_at.isoformat(),
-                        "updatedAt": t.updated_at.isoformat(),
-                        "costUsd": 0,
-                    }
+                    _to_list_item(
+                        t,
+                        _task_state_mgr,
+                        agent_name=(
+                            name_map.get(t.agent_id, "browser-agent")
+                            if t.agent_id is not None
+                            else "browser-agent"
+                        ),
+                    )
                     for t in result.items
                 ],
                 "total": result.total,
@@ -304,6 +398,90 @@ async def list_tasks(
         "page": page,
         "pageSize": pageSize,
     }
+
+
+def _to_list_item(
+    t: TaskOut,
+    state_mgr: TaskStateManager,
+    agent_name: str = "browser-agent",
+) -> dict:
+    """把 Task ORM 转换为列表项 dict,status 字段做 runtime_state 兜底
+
+    为什么需要兜底:
+    - TimelineRecorder 异步订阅 EventBus,写 DB 有 IO 延迟
+    - 启动竞态期间或 DB 写失败时,DB 的 status 会滞后于内存 TaskStateManager
+    - 与 get_task 端的 status 字段处理保持一致(第 808 行的同样模式)
+
+    兜底规则:
+    - runtime_state 是非 PENDING 的"已知最新态" → 用 runtime_state
+    - runtime_state 是 PENDING(或未初始化) → 用 DB 值(避免误把已写入的
+      终态改回 PENDING,因为 TaskStateManager 默认值是 PENDING)
+    """
+    runtime_state = state_mgr.get_state(str(t.id))
+    # 仅当 runtime_state 不是默认 PENDING 时,才认为内存比 DB 更新
+    # 这样可以避免:
+    # 1) 进程刚启动,TaskStateManager 还没 rehydrate 完成时,把 DB 已落库的
+    #    cancelled/completed 错改回 pending
+    # 2) _task_state_mgr 是模块级单例但 TaskStateManager 是新进程实例的场景
+    status = runtime_state.value if runtime_state != TaskState.PENDING else t.status
+    # 防御性白名单:DB 里可能存在历史脏数据(CHECK 约束 2026-06-10 才加),
+    # 这里兜一次,非法值在 list_tasks 阶段就过滤,避免污染前端
+    # (StatusBadge 对未知值会显示"未知" + warn,体验很差)
+    if status not in _ALLOWED_STATUS_VALUES:
+        log.warning(
+            "list_tasks.invalid_status_filtered",
+            task_id=str(t.id),
+            bad_status=status,
+        )
+        status = "failed"  # 安全降级:前端能识别"失败"态,且终态不再误显示为"在跑"
+    return {
+        "id": str(t.id),
+        "goal": t.goal,
+        "agentName": agent_name,
+        "status": status,
+        "createdAt": t.created_at.isoformat(),
+        "updatedAt": t.updated_at.isoformat(),
+        "costUsd": 0,
+    }
+
+
+async def _persist_status_to_db(task_id: str, status: TaskState) -> None:
+    """把 status 显式同步写回 tasks 表 —— transition 后的兜底落库。
+
+    为什么需要显式落库(因为 TimelineRecorder 已在订阅):
+    - TimelineRecorder 异步订阅 + 异步写 DB,有 100ms 量级延迟
+    - 启动竞态或 handler 异常时,DB 状态会滞后
+    - 用户能从 list_tasks 看到的状态,必须有同步落库做"最终一致性"兜底
+    - 与 TimelineRecorder 双写是幂等的(TimelineRecorder._on_state_changed
+      调 update_status,白名单校验 + 仅 status 字段,后写赢)
+
+    失败处理:
+    - DB 不可用 / task_id 非法 UUID / 任何 IO 错误 → 仅记录 warning,
+      不抛异常(transition 已成功,内存状态正确,前端 5s 轮询下次会拿到 runtime fallback)
+    """
+    if _pg_client is None:
+        return
+    try:
+        task_uuid = UUID(task_id)
+    except ValueError:
+        log.warning("persist_status.invalid_task_id", task_id=task_id)
+        return
+
+    session = _pg_client.session()
+    try:
+        repo = TaskRepository(session)
+        await repo.update_status(task_uuid, TaskUpdate(status=status.value))
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        log.warning(
+            "persist_status.failed",
+            task_id=task_id,
+            target_status=status.value,
+            exc_info=True,
+        )
+    finally:
+        await session.close()
 
 
 @router.get("/{task_id}/timeline")
@@ -524,6 +702,8 @@ async def stop_task(
     target_state = TaskState.STOPPING
     try:
         await _task_state_mgr.transition(task_id, target_state, "用户主动停止")
+        # 显式落库兜底:见 _persist_status_to_db 注释
+        await _persist_status_to_db(task_id, target_state)
     except Exception as e:
         return TaskActionResponse(
             task_id=task_id,
@@ -596,6 +776,8 @@ async def pause_task(
     # 合法转换: RUNNING/WAITING_CONFIRM → PAUSED
     try:
         await _task_state_mgr.transition(task_id, TaskState.PAUSED, "用户暂停任务")
+        # 显式落库兜底:见 _persist_status_to_db 注释
+        await _persist_status_to_db(task_id, TaskState.PAUSED)
     except Exception as e:
         return TaskActionResponse(
             task_id=task_id,
@@ -672,6 +854,8 @@ async def resume_task(
     # PAUSED → RUNNING(先转换再启动 Worker)
     try:
         await _task_state_mgr.transition(task_id, TaskState.RUNNING, "用户继续任务")
+        # 显式落库兜底:见 _persist_status_to_db 注释
+        await _persist_status_to_db(task_id, TaskState.RUNNING)
     except Exception as e:
         return TaskActionResponse(
             task_id=task_id,
@@ -759,6 +943,7 @@ async def get_task(
     # DB 持久化数据
     db_task: TaskOut | None = None
     db_steps: list[TaskStepOut] = []
+    agent_name = "browser-agent"  # V2 兜底:DB 不可用时回退硬编码
 
     if _pg_client is not None:
         try:
@@ -774,6 +959,9 @@ async def get_task(
             # 校验任务归属
             if db_task is None or db_task.user_id != user_id:
                 raise HTTPException(status_code=404, detail="Task not found")
+
+            # V2: 查询 agent 展示名(替代硬编码 "browser-agent")
+            agent_name = await _resolve_single_agent_name(session, db_task.agent_id)
 
             # 查询步骤
             step_repo = TaskStepRepository(session)
@@ -832,7 +1020,7 @@ async def get_task(
     return {
         "id": str(db_task.id),
         "goal": db_task.goal,
-        "agentName": "browser-agent",
+        "agentName": agent_name,
         "status": status,
         "createdAt": db_task.created_at.isoformat(),
         "updatedAt": db_task.updated_at.isoformat()

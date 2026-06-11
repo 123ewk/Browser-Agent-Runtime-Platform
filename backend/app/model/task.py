@@ -32,6 +32,13 @@ class Task(Base, UUIDMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agents.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+        default=None,
+    )
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
