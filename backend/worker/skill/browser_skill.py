@@ -41,39 +41,51 @@ class BrowserSkill(BaseSkill):
 
         纯分发 —— 不做 retry,不做 fallback,不做 DOM 判断。
         失败直接返回 error,由 Worker 上报 Runtime。
+
+        V2.5: navigate/click/input_text 类动作后自动提取 dom_summary + visible_text
+        (给 ReActEngine 提供页面上下文)。
         """
         try:
             if action.type == "navigate":
                 await self._browser.navigate(action.target or "")
                 url = await self._browser.get_url()
                 title = await self._browser.get_title()
+                dom, visible = await self._extract_page_state()
                 return SkillResult(
                     status="ok",
                     summary=f"已导航到: {title}",
                     url=url,
                     title=title,
+                    dom_summary=dom,
+                    visible_text=visible,
                 )
 
             elif action.type == "click":
                 await self._browser.click(action.target or "")
                 url = await self._browser.get_url()
                 title = await self._browser.get_title()
+                dom, visible = await self._extract_page_state()
                 return SkillResult(
                     status="ok",
                     summary=f"已点击: {action.target}",
                     url=url,
                     title=title,
+                    dom_summary=dom,
+                    visible_text=visible,
                 )
 
             elif action.type == "input_text":
                 await self._browser.input_text(action.target or "", action.value or "")
                 url = await self._browser.get_url()
                 title = await self._browser.get_title()
+                dom, visible = await self._extract_page_state()
                 return SkillResult(
                     status="ok",
                     summary=f"已在 {action.target} 输入: {action.value}",
                     url=url,
                     title=title,
+                    dom_summary=dom,
+                    visible_text=visible,
                 )
 
             elif action.type == "screenshot":
@@ -89,23 +101,29 @@ class BrowserSkill(BaseSkill):
 
                 url = await self._browser.get_url()
                 title = await self._browser.get_title()
+                dom, visible = await self._extract_page_state()
                 return SkillResult(
                     status="ok",
                     summary="截图已保存",
                     url=url,
                     title=title,
                     screenshot_key=screenshot_key,
+                    dom_summary=dom,
+                    visible_text=visible,
                 )
 
             elif action.type == "extract":
                 text = await self._browser.get_text(action.target or "body")
                 url = await self._browser.get_url()
                 title = await self._browser.get_title()
+                dom, visible = await self._extract_page_state()
                 return SkillResult(
                     status="ok",
                     summary=f"已提取文本 ({len(text)} 字符)",
                     url=url,
                     title=title,
+                    dom_summary=dom,
+                    visible_text=visible,
                 )
 
             else:
@@ -121,3 +139,48 @@ class BrowserSkill(BaseSkill):
                 summary=f"执行失败: {e}",
                 error=str(e),
             )
+
+    async def _extract_page_state(self) -> tuple[str, str]:
+        """V2.5: 提取当前页面的 dom_summary 和 visible_text
+
+        dom_summary: 结构化提取可交互元素 (按钮/输入框/链接 + 关键属性, ≤3000 字符)
+        visible_text: 页面实际可见的纯文本 (≤2000 字符)
+        两者互补, 给 ReActEngine 提供页面上下文。
+        """
+        dom = ""
+        visible = ""
+        page = self._browser.page  # BrowserManager.page 属性 (raise if None)
+
+        try:
+            # 提取可见文本
+            visible = await page.inner_text("body") or ""
+            visible = visible[:2000]
+        except Exception:
+            pass
+
+        try:
+            # 提取可交互元素结构化摘要
+            js_code = """
+            () => {
+                const elements = Array.from(document.querySelectorAll(
+                    'button, input, a, [role="button"], [role="link"], h1, h2, h3, [aria-label]'
+                ));
+                const summary = elements.slice(0, 100).map(el => {
+                    const tag = el.tagName.toLowerCase();
+                    const text = (el.innerText || el.value || el.ariaLabel || '').slice(0, 100);
+                    const attrs = [];
+                    if (el.id) attrs.push('id=' + el.id);
+                    if (el.name) attrs.push('name=' + el.name);
+                    if (el.type) attrs.push('type=' + el.type);
+                    if (el.href) attrs.push('href=' + el.href.slice(0, 50));
+                    return '<' + tag + (attrs.length ? ' ' + attrs.join(' ') : '') + '>' + text + '</' + tag + '>';
+                }).join('\\n');
+                return summary.slice(0, 3000);
+            }
+            """
+            dom = await page.evaluate(js_code) or ""
+            dom = dom[:3000]
+        except Exception:
+            pass
+
+        return dom, visible

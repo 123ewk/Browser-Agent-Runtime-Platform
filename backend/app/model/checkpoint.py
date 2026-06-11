@@ -48,4 +48,7 @@ class Checkpoint(Base, UUIDMixin):
         UUID(as_uuid=True), nullable=True
     )
 
+    # V2.5: 人机协作 — 记录"用户未响应的 ask_human 上下文", resume 时还原到 Trajectory 头部
+    pending_ask_human: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     task: Mapped[Task] = relationship(back_populates="checkpoints")

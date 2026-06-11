@@ -1,0 +1,13 @@
+# LLM 模型定价表 (单位: USD per 1M tokens)
+# 维护: SRE 在仓库内修改 → 走 PR 流程 → 配置中心拉取 → 进程内热重载
+# 上次更新: 2026-06-11
+version: "1.0"
+models:
+  deepseek-v4-flash: {input: 0.14, output: 0.28}
+  deepseek-v4-pro: {input: 0.55, output: 1.10}
+  mimo-v2: {input: 0.10, output: 0.20}
+  mimo-v2.5: {input: 0.10, output: 0.20}
+  gpt-4o: {input: 2.50, output: 10.00}
+  gpt-4o-mini: {input: 0.15, output: 0.60}
+  # 缺省定价 (任何未列出模型 fallback 到这)
+  _default: {input: 0.0, output: 0.0}

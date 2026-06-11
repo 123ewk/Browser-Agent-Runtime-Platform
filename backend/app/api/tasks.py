@@ -30,8 +30,16 @@ from app.repository.task_step import TaskStepRepository
 from app.runtime.checkpoint_manager import CheckpointManager
 from app.runtime.event_bus import EventBus
 from app.runtime.policy_engine import PolicyEngine
-from app.runtime.protocol.schemas import ActionDetail, Command, RuntimeEvent
-from app.runtime.protocol.types import CommandType, EventType, TaskState
+from app.runtime.protocol.constants import WAITING_USER_TIMEOUT
+from app.runtime.protocol.schemas import (
+    ActionDetail,
+    Command,
+    InterruptPayload,
+    ResumePayload,
+    RuntimeEvent,
+)
+from app.runtime.protocol.types import CommandType, EventType, ReActDecisionType, TaskState
+from app.runtime.react_engine import ObservationState, ReActEngine
 from app.runtime.task_runner import BrowserTaskRunner, TaskContext
 from app.runtime.task_state import TaskStateManager
 from app.runtime.trajectory import Trajectory
@@ -56,6 +64,7 @@ _event_bus = EventBus()
 _task_state_mgr = TaskStateManager(_event_bus)
 _ws_manager = WebSocketManager(_event_bus)
 _policy_engine: PolicyEngine | None = None
+_react_engine: ReActEngine | None = None  # V2.5: 默认决策引擎
 _pg_client: PostgresClient | None = None
 _timeline_recorder: object | None = None  # TimelineRecorder 实例(在 init 中赋值)
 _checkpoint_manager: CheckpointManager | None = None  # CheckpointManager 实例
@@ -139,10 +148,21 @@ def init_policy_engine(llm_provider: ChatLLM) -> None:
     """初始化 PolicyEngine —— 在 FastAPI startup 后调用
 
     必须在 lifespan startup 完成后调用,因为需要 app.state.deps.llm。
+    V2.5: PolicyEngine 保留作为 ReActEngine LLM 失败时的 fallback。
     """
     global _policy_engine
     _policy_engine = PolicyEngine(llm_provider)
     log.info("policy_engine.initialized")
+
+
+def init_react_engine(llm_provider: ChatLLM, event_bus: EventBus) -> None:
+    """初始化 ReActEngine —— V2.5 默认决策引擎
+
+    必须在 lifespan startup 完成后调用。
+    """
+    global _react_engine
+    _react_engine = ReActEngine(llm_provider, event_bus)
+    log.info("react_engine.initialized")
 
 
 async def init_timeline_recorder(pg: PostgresClient) -> None:
@@ -596,9 +616,46 @@ async def send_task_message(
             created_at=now_iso,
         )
 
-    # 根据当前状态决定发送哪种命令
-    if current_state == TaskState.WAITING_CONFIRM:
-        # 简单启发式:内容含"拒绝"/"取消"/"不要"/"no"/"reject"视为拒绝
+    # ── V2.5: 按状态分流 ──
+    if current_state == TaskState.RUNNING:
+        # V2.5: 用户中途插话 → INTERRUPT Worker (完全替代 V2.0 的 CONTINUE+feedback)
+        cmd = Command(
+            command_id=f"cmd-{uuid4().hex[:12]}",
+            type=CommandType.INTERRUPT,
+            payload=InterruptPayload(
+                reason="user_interrupt",
+                user_message=payload.content,
+            ).model_dump(),
+        )
+        await _task_state_mgr.transition(
+            task_id, TaskState.WAITING_USER, f"用户中断: {payload.content[:80]}"
+        )
+        await _persist_status_to_db(task_id, TaskState.WAITING_USER)
+        await runner.send_command(cmd)
+        log.info("message.user_interrupt", task_id=task_id, content=payload.content[:80])
+
+    elif current_state == TaskState.WAITING_USER:
+        # V2.5: 用户回复 Agent 求助 / 继续中断
+        prev_interrupt = _task_state_mgr.get_context(task_id, "interrupt_payload") or {}
+        cmd = Command(
+            command_id=f"cmd-{uuid4().hex[:12]}",
+            type=CommandType.RESUME,
+            payload=ResumePayload(
+                feedback=payload.content,
+                ask_human_block_type=prev_interrupt.get("ask_human_block_type", ""),
+                ask_human_question=prev_interrupt.get("ask_human_question", ""),
+                previous_interrupt_reason=prev_interrupt.get("reason", ""),
+            ).model_dump(),
+        )
+        await _task_state_mgr.transition(
+            task_id, TaskState.RUNNING, f"用户回复: {payload.content[:80]}"
+        )
+        await _persist_status_to_db(task_id, TaskState.RUNNING)
+        await runner.send_command(cmd)
+        log.info("message.user_resume", task_id=task_id, content=payload.content[:80])
+
+    elif current_state == TaskState.WAITING_CONFIRM:
+        # V2.5: 保留 V2.0 的 reject_keywords 启发式
         reject_keywords = {"拒绝", "取消", "不要", "no", "reject", "cancel", "stop"}
         is_reject = any(kw in payload.content.lower() for kw in reject_keywords)
 
@@ -608,40 +665,29 @@ async def send_task_message(
                 type=CommandType.REJECT,
                 payload={"reason": payload.content},
             )
-            log.info("message.reject_sent", task_id=task_id, content=payload.content[:80])
+            await _task_state_mgr.transition(
+                task_id, TaskState.STOPPING, f"用户拒绝: {payload.content[:80]}"
+            )
         else:
             cmd = Command(
                 command_id=f"cmd-{uuid4().hex[:12]}",
                 type=CommandType.CONTINUE,
                 payload={"approved": True, "feedback": payload.content},
             )
-            # WAITING_CONFIRM → RUNNING(用户确认后恢复)
-            try:
-                await _task_state_mgr.transition(
-                    task_id, TaskState.RUNNING, f"用户确认: {payload.content[:80]}"
-                )
-            except Exception:
-                log.warning("message.state_transition_failed", task_id=task_id, exc_info=True)
-            log.info("message.continue_sent", task_id=task_id, content=payload.content[:80])
-
+            await _task_state_mgr.transition(
+                task_id, TaskState.RUNNING, f"用户确认: {payload.content[:80]}"
+            )
         await runner.send_command(cmd)
-
-    elif current_state == TaskState.RUNNING:
-        # 运行中追加用户反馈
-        cmd = Command(
-            command_id=f"cmd-{uuid4().hex[:12]}",
-            type=CommandType.CONTINUE,
-            payload={"feedback": payload.content},
-        )
-        await runner.send_command(cmd)
-        log.info("message.feedback_sent", task_id=task_id, content=payload.content[:80])
+        log.info("message.confirm_response", task_id=task_id, is_reject=is_reject)
 
     else:
+        # PAUSED / 终态: 拒绝
         log.warning(
             "message.task_not_accepting",
             task_id=task_id,
             state=current_state.value,
         )
+        raise HTTPException(400, f"任务状态 {current_state.value} 不接受消息")
 
     return TaskMessageOut(
         id=msg_id,
@@ -995,7 +1041,7 @@ async def get_task(
     # status 优先用运行时状态(更实时),回退到 DB 状态
     status = runtime_state.value if runtime_state != TaskState.PENDING else db_task.status
 
-    # 构造步骤列表(与前端 TaskStep 对齐)
+    # 构造步骤列表(与前端 TaskStep 对齐, V2.5: +step_type/reasoning)
     steps = [
         {
             "index": s.step_index,
@@ -1003,8 +1049,12 @@ async def get_task(
             "title": s.action,
             "summary": (s.result or {}).get("summary", ""),
             "startedAt": "",
-            "durationMs": (s.result or {}).get("duration_ms", 0) or 0,
+            "durationMs": s.duration_ms or (s.result or {}).get("duration_ms", 0) or 0,
             "tokens": s.tokens_used or 0,
+            "stepType": s.step_type,
+            "reasoning": s.reasoning,
+            "llmLatencyMs": s.llm_latency_ms,
+            "modelUsed": s.model_name,
         }
         for s in db_steps
     ]
@@ -1013,9 +1063,6 @@ async def get_task(
     result_data = db_task.result or {}
     screenshots = result_data.get("screenshots", [])
     skill_calls = result_data.get("skill_calls", [])
-
-    # 计算总耗时和总 token
-    total_tokens = sum(s.tokens_used or 0 for s in db_steps)
 
     return {
         "id": str(db_task.id),
@@ -1026,9 +1073,10 @@ async def get_task(
         "updatedAt": db_task.updated_at.isoformat()
         if db_task.updated_at
         else db_task.created_at.isoformat(),
-        "costUsd": 0,
+        "costUsd": float(db_task.total_cost_usd or 0),  # V2.5: 真实成本
+        "modelUsed": db_task.llm_model_used,  # V2.5: 使用的模型
         "totalDurationSec": result_data.get("total_duration_sec", 0) or 0,
-        "totalTokens": total_tokens,
+        "totalTokens": db_task.total_tokens or 0,  # V2.5: DB 直接值
         "steps": steps,
         "screenshots": screenshots,
         "skillCalls": skill_calls,
@@ -1112,11 +1160,15 @@ async def _run_task(
     same_action_count = 0
     result_state = TaskState.FAILED
     result_reason = ""
+    # V2.5: 最近错误滑窗 (每 task 独立, 进程内 deque)
+    from collections import deque
+
+    recent_errors: deque[str] = deque(maxlen=3)
     # asyncio.Queue 保证并发安全: 多个 handler 同时 put 不会丢事件
     event_queue: asyncio.Queue[RuntimeEvent] = asyncio.Queue()
 
     # 加载用户偏好(长期记忆) — 注入 PolicyEngine system prompt
-    user_prefs: list | None = None
+    user_prefs: list | None = None  # list[UserPreference]
     if _pg_client is not None and context.user_id is not None:
         session = _pg_client.session()
         try:
@@ -1148,6 +1200,10 @@ async def _run_task(
     async def _on_error(event: RuntimeEvent) -> None:
         if event.task_id == task_id:
             await event_queue.put(event)
+            # V2.5: 维护最近错误滑窗 (给 ReActEngine observation 用)
+            msg = event.payload.get("message", "")
+            if msg:
+                recent_errors.append(msg)
 
     async def _on_task_finished(event: RuntimeEvent) -> None:
         if event.task_id == task_id:
@@ -1157,11 +1213,23 @@ async def _run_task(
         if event.task_id == task_id:
             await event_queue.put(event)
 
+    async def _on_need_human(event: RuntimeEvent) -> None:
+        """V2.5: Worker 发射 NEED_HUMAN 事件后, Runtime 转 WAITING_USER"""
+        if event.task_id == task_id:
+            await event_queue.put(event)
+
+    async def _on_resumed(event: RuntimeEvent) -> None:
+        """V2.5: Worker 从中断/暂停恢复 (用户已响应 WAITING_USER)"""
+        if event.task_id == task_id:
+            await event_queue.put(event)
+
     # 先订阅再启动(防竞态)
     _event_bus.subscribe(EventType.STEP_COMPLETE, _on_step_complete)
     _event_bus.subscribe(EventType.ERROR, _on_error)
     _event_bus.subscribe(EventType.TASK_FINISHED, _on_task_finished)
     _event_bus.subscribe(EventType.WATCHDOG_TIMEOUT, _on_watchdog_timeout)
+    _event_bus.subscribe(EventType.NEED_HUMAN, _on_need_human)  # V2.5
+    _event_bus.subscribe(EventType.RESUMED, _on_resumed)  # V2.5
 
     try:
         await runner.start_task(context)
@@ -1191,7 +1259,7 @@ async def _run_task(
                 step_index = payload.get("index", 0)
                 consecutive_errors = 0
 
-                # 追加 Trajectory(供 PolicyEngine 参考)
+                # 追加 Trajectory(供决策引擎参考)
                 trajectory.add_step(
                     action=ActionDetail(
                         type=payload.get("action", ""),
@@ -1200,6 +1268,34 @@ async def _run_task(
                     url=payload.get("url"),
                     title=payload.get("title"),
                     summary=payload.get("summary", ""),
+                )
+
+                # V2.5: 构建 ObservationState (从 STEP_COMPLETE payload 提取)
+                observation = ObservationState(
+                    url=payload.get("url"),
+                    title=payload.get("title"),
+                    dom_summary=payload.get("dom_summary", ""),
+                    visible_text=payload.get("visible_text", ""),
+                    recent_errors=list(recent_errors),
+                    step_index=step_index,
+                )
+
+                # V2.5: 合成 OBSERVE_COMPLETE 事件 (给 TimelineRecorder 等)
+                await _event_bus.publish(
+                    RuntimeEvent(
+                        version="2.0.0",
+                        event_id=f"observe-{step_index}",
+                        event=EventType.OBSERVE_COMPLETE,
+                        ts=datetime.now(UTC),
+                        task_id=task_id,
+                        payload={
+                            "step_index": step_index,
+                            "url": observation.url,
+                            "title": observation.title,
+                            "dom_summary": observation.dom_summary,
+                            "visible_text": observation.visible_text,
+                        },
+                    )
                 )
 
                 # Checkpoint: 判定是否保存当前进度(定期存 + 关键操作)
@@ -1234,28 +1330,221 @@ async def _run_task(
                     result_reason = f"达到最大步数 ({context.max_steps})"
                     break
 
-                # PolicyEngine 决策下一步
-                if _policy_engine is not None:
+                # V2.5: ReActEngine 决策 (优先), 失败时 fallback 到 PolicyEngine
+                decision = None
+                if _react_engine is not None:
+                    try:
+                        decision = await _react_engine.decide(
+                            context.goal,
+                            trajectory,
+                            observation,
+                            task_id=task_id,
+                            preferences=user_prefs,
+                        )
+                    except Exception:
+                        log.warning("react_engine.decide_failed", task_id=task_id, exc_info=True)
+                        # Fallback 到 PolicyEngine
+                        if _policy_engine is not None:
+                            try:
+                                decision = await _policy_engine.decide(
+                                    context.goal, trajectory, preferences=user_prefs
+                                )
+                            except Exception:
+                                log.warning(
+                                    "policy_engine.decide_failed", task_id=task_id, exc_info=True
+                                )
+                elif _policy_engine is not None:
                     try:
                         decision = await _policy_engine.decide(
                             context.goal, trajectory, preferences=user_prefs
                         )
+                    except Exception:
+                        log.warning("policy_engine.decide_failed", task_id=task_id, exc_info=True)
 
-                        # 检查 is_terminal
-                        if decision.is_terminal:
-                            log.info("policy.is_terminal", task_id=task_id, step=step_index)
+                if decision is None:
+                    result_state = TaskState.FAILED
+                    result_reason = "所有决策引擎均失败"
+                    await runner.send_command(
+                        Command(
+                            command_id=_new_cmd_id(),
+                            type=CommandType.STOP,
+                            payload={"reason": "all_engines_failed"},
+                        )
+                    )
+                    break
+
+                # ── V2.5: 决策类型路由 ──
+                if decision.decision_type == ReActDecisionType.DONE.value or decision.is_terminal:
+                    log.info("react.done_detected", task_id=task_id, step=step_index)
+                    await runner.send_command(
+                        Command(
+                            command_id=_new_cmd_id(),
+                            type=CommandType.STOP,
+                            payload={"reason": "goal_achieved"},
+                        )
+                    )
+                    result_state = TaskState.COMPLETED
+                    result_reason = decision.reasoning
+                    break
+
+                if decision.decision_type == ReActDecisionType.ASK_HUMAN.value:
+                    # V2.5: Agent 求助 → WAITING_USER
+                    block_type = decision.action.value or "other"
+                    question = decision.action.description
+                    log.info(
+                        "react.ask_human",
+                        task_id=task_id,
+                        block_type=block_type,
+                        question=question[:80],
+                    )
+
+                    # 保存 ASK_HUMAN 上下文 (供 resume 时回传)
+                    _task_state_mgr.set_context(
+                        task_id,
+                        key="interrupt_payload",
+                        value={
+                            "ask_human_block_type": block_type,
+                            "ask_human_question": question,
+                        },
+                    )
+                    await _task_state_mgr.transition(
+                        task_id, TaskState.WAITING_USER, f"Agent 求助: {question[:80]}"
+                    )
+                    await _persist_status_to_db(task_id, TaskState.WAITING_USER)
+
+                    # 通知 Worker 中断
+                    await runner.send_command(
+                        Command(
+                            command_id=_new_cmd_id(),
+                            type=CommandType.INTERRUPT,
+                            payload=InterruptPayload(
+                                reason="agent_ask_human",
+                                ask_human_block_type=block_type,
+                                ask_human_question=question,
+                            ).model_dump(),
+                        )
+                    )
+
+                    # V2.5: 等待用户响应 (超时 300s → FAILED)
+                    # 收到 RESUMED 后重新决策, 支持多轮 ASK_HUMAN
+                    while True:
+                        try:
+                            response_event = await asyncio.wait_for(
+                                event_queue.get(), timeout=WAITING_USER_TIMEOUT
+                            )
+                        except TimeoutError:
+                            result_reason = "用户 300s 未响应 Agent 求助"
+                            log.warning("task.wait_user_timeout", task_id=task_id)
+                            await _task_state_mgr.transition(
+                                task_id, TaskState.FAILED, f"wait_user_timeout: {result_reason}"
+                            )
+                            if _checkpoint_manager is not None:
+                                await _checkpoint_manager.save_task_checkpoint(
+                                    task_id=task_id,
+                                    goal=context.goal,
+                                    step_index=trajectory.step_index,
+                                    trajectory_summary=trajectory.summary_for_prompt(),
+                                    checkpoint_type="user_unresponsive",
+                                    action_result=question,
+                                )
+                            break
+                        if response_event.event == EventType.TASK_FINISHED:
+                            break
+
+                        # 用户已响应 → 重新决策
+                        # 注意: observation 可能已过时 (用户在页面上操作后页面状态变了)
+                        # 但当前 Worker RESUME 后会执行新动作并返回 STEP_COMPLETE,
+                        # STEP_COMPLETE 处理时会更新 observation, 所以此处用旧 observation
+                        # 做决策是可接受的——决策基于 trajectory + 当前已知页面状态,
+                        # 如果页面确实变了, 下一个 STEP_COMPLETE 会修正
+                        _new_dec = None
+                        if _react_engine is not None:
+                            try:
+                                _new_dec = await _react_engine.decide(
+                                    context.goal,
+                                    trajectory,
+                                    observation,
+                                    task_id=task_id,
+                                    preferences=user_prefs,
+                                )
+                            except Exception:
+                                log.warning(
+                                    "react_engine.resume_decide_failed",
+                                    task_id=task_id,
+                                    exc_info=True,
+                                )
+                        if _new_dec is None and _policy_engine is not None:
+                            try:
+                                _new_dec = await _policy_engine.decide(
+                                    context.goal,
+                                    trajectory,
+                                    preferences=user_prefs,
+                                )
+                            except Exception:
+                                log.warning(
+                                    "policy_engine.resume_decide_failed",
+                                    task_id=task_id,
+                                    exc_info=True,
+                                )
+                        if _new_dec is None:
+                            result_state = TaskState.FAILED
+                            result_reason = "用户响应后所有决策引擎均失败"
                             await runner.send_command(
                                 Command(
                                     command_id=_new_cmd_id(),
                                     type=CommandType.STOP,
-                                    payload={"reason": "is_terminal"},
+                                    payload={"reason": "all_engines_failed"},
+                                )
+                            )
+                            break
+
+                        if (
+                            _new_dec.decision_type == ReActDecisionType.DONE.value
+                            or _new_dec.is_terminal
+                        ):
+                            await runner.send_command(
+                                Command(
+                                    command_id=_new_cmd_id(),
+                                    type=CommandType.STOP,
+                                    payload={"reason": "goal_achieved"},
                                 )
                             )
                             result_state = TaskState.COMPLETED
-                            result_reason = decision.reasoning
+                            result_reason = _new_dec.reasoning
                             break
 
-                        # 死循环检测: 连续相同动作
+                        if _new_dec.decision_type == ReActDecisionType.ASK_HUMAN.value:
+                            block_type = _new_dec.action.value or "other"
+                            question = _new_dec.action.description
+                            _task_state_mgr.set_context(
+                                task_id,
+                                "interrupt_payload",
+                                value={
+                                    "ask_human_block_type": block_type,
+                                    "ask_human_question": question,
+                                },
+                            )
+                            await _task_state_mgr.transition(
+                                task_id,
+                                TaskState.WAITING_USER,
+                                f"Agent 再次求助: {question[:80]}",
+                            )
+                            await _persist_status_to_db(task_id, TaskState.WAITING_USER)
+                            await runner.send_command(
+                                Command(
+                                    command_id=_new_cmd_id(),
+                                    type=CommandType.INTERRUPT,
+                                    payload=InterruptPayload(
+                                        reason="agent_ask_human",
+                                        ask_human_block_type=block_type,
+                                        ask_human_question=question,
+                                    ).model_dump(),
+                                )
+                            )
+                            continue  # 等用户再次响应
+
+                        # ACT 路径: 死循环检测 + 发送 CONTINUE
+                        decision = _new_dec
                         next_action = decision.action
                         if (
                             next_action.type == last_action_type
@@ -1285,7 +1574,6 @@ async def _run_task(
                             result_reason = f"连续 {MAX_SAME_ACTION} 次相同动作,疑似死循环"
                             break
 
-                        # 发送 CONTINUE(含下一步动作)
                         await runner.send_command(
                             Command(
                                 command_id=_new_cmd_id(),
@@ -1294,24 +1582,62 @@ async def _run_task(
                             )
                         )
                         log.info(
-                            "task.continue_loop",
+                            "task.continue_after_resume",
                             task_id=task_id,
-                            step=step_index,
                             next=next_action.type,
                         )
+                        break  # 回到主循环等下一个事件
 
-                    except Exception:
-                        log.warning("policy_engine.decide_failed", task_id=task_id, exc_info=True)
-                        result_state = TaskState.FAILED
-                        result_reason = "PolicyEngine 决策失败"
-                        await runner.send_command(
-                            Command(
-                                command_id=_new_cmd_id(),
-                                type=CommandType.STOP,
-                                payload={"reason": "policy_error"},
-                            )
+                    if result_state not in (TaskState.FAILED, TaskState.COMPLETED):
+                        continue  # 已发 CONTINUE, 回主循环
+                    break  # terminal: 主循环终止
+
+                # ── ACT 路径 ──
+                # 死循环检测: 连续相同动作
+                next_action = decision.action
+                if (
+                    next_action.type == last_action_type
+                    and next_action.target == last_action_target
+                ):
+                    same_action_count += 1
+                else:
+                    same_action_count = 1
+                last_action_type = next_action.type
+                last_action_target = next_action.target
+
+                if same_action_count >= MAX_SAME_ACTION:
+                    log.warning(
+                        "task.same_action_loop",
+                        task_id=task_id,
+                        action_type=next_action.type,
+                        count=same_action_count,
+                    )
+                    await runner.send_command(
+                        Command(
+                            command_id=_new_cmd_id(),
+                            type=CommandType.STOP,
+                            payload={"reason": "same_action_loop"},
                         )
-                        break
+                    )
+                    result_state = TaskState.FAILED
+                    result_reason = f"连续 {MAX_SAME_ACTION} 次相同动作,疑似死循环"
+                    break
+
+                # 发送 CONTINUE(含下一步动作)
+                await runner.send_command(
+                    Command(
+                        command_id=_new_cmd_id(),
+                        type=CommandType.CONTINUE,
+                        payload={"action": next_action.model_dump()},
+                    )
+                )
+                log.info(
+                    "task.continue_loop",
+                    task_id=task_id,
+                    step=step_index,
+                    next=next_action.type,
+                    decision_type=decision.decision_type,
+                )
 
             elif event.event == EventType.ERROR:
                 payload = event.payload
@@ -1376,14 +1702,66 @@ async def _run_task(
                     )
                 break
 
+            elif event.event == EventType.NEED_HUMAN:
+                # V2.5: Worker 端直接发射 NEED_HUMAN (BrowserSkill 检测到阻塞)
+                payload = event.payload
+                block_type = payload.get("block_type", "other")
+                question = payload.get("question", "")
+
+                _task_state_mgr.set_context(
+                    task_id,
+                    key="interrupt_payload",
+                    value={
+                        "ask_human_block_type": block_type,
+                        "ask_human_question": question,
+                    },
+                )
+                await _task_state_mgr.transition(
+                    task_id, TaskState.WAITING_USER, f"Worker 检测到阻塞: {block_type}"
+                )
+                await _persist_status_to_db(task_id, TaskState.WAITING_USER)
+
+                # 通知 Worker 中断 (与 ASK_HUMAN 路径保持一致, 同步 Worker 状态机)
+                await runner.send_command(
+                    Command(
+                        command_id=_new_cmd_id(),
+                        type=CommandType.INTERRUPT,
+                        payload=InterruptPayload(
+                            reason="worker_need_human",
+                            ask_human_block_type=block_type,
+                            ask_human_question=question,
+                        ).model_dump(),
+                    )
+                )
+
+                # 等待用户响应
+                try:
+                    await asyncio.wait_for(event_queue.get(), timeout=WAITING_USER_TIMEOUT)
+                    continue  # 继续循环, ReActEngine 重新规划
+                except TimeoutError:
+                    result_reason = "用户 300s 未响应 Worker 阻塞"
+                    log.warning("task.need_human_timeout", task_id=task_id)
+                    # 超时保存 checkpoint (与 ASK_HUMAN 路径一致)
+                    if _checkpoint_manager is not None:
+                        await _checkpoint_manager.save_task_checkpoint(
+                            task_id=task_id,
+                            goal=context.goal,
+                            step_index=trajectory.step_index,
+                            trajectory_summary=trajectory.summary_for_prompt(),
+                            checkpoint_type="user_unresponsive",
+                            action_result=f"NEED_HUMAN 超时: {block_type} - {question[:80]}",
+                        )
+                    await _task_state_mgr.transition(
+                        task_id, TaskState.FAILED, f"wait_user_timeout: {result_reason}"
+                    )
+                    break
+
             elif event.event == EventType.TASK_FINISHED:
                 payload = event.payload
                 status = payload.get("status", "failed")
                 if status == "completed":
                     result_state = TaskState.COMPLETED
                 elif status == "cancelled":
-                    # RUNNING → STOPPING → CANCELLED(合法路径)
-                    # 直接 RUNNING→CANCELLED 不在转换表中,需经过 STOPPING
                     await _task_state_mgr.transition(task_id, TaskState.STOPPING, result_reason)
                     result_state = TaskState.CANCELLED
                 else:
@@ -1405,5 +1783,7 @@ async def _run_task(
         _event_bus.unsubscribe(EventType.ERROR, _on_error)
         _event_bus.unsubscribe(EventType.TASK_FINISHED, _on_task_finished)
         _event_bus.unsubscribe(EventType.WATCHDOG_TIMEOUT, _on_watchdog_timeout)
+        _event_bus.unsubscribe(EventType.NEED_HUMAN, _on_need_human)
+        _event_bus.unsubscribe(EventType.RESUMED, _on_resumed)
         await runner.stop_task()
         _active_runners.pop(task_id, None)

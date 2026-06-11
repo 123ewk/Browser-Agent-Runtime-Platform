@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("seed_agents.failed", exc_info=True)
 
-    # 初始化 PolicyEngine (Phase 2.1: LLM 策略引擎)
+    # 初始化 PolicyEngine (V1 策略引擎, V2.5 保留作为 fallback)
     from app.api.tasks import init_policy_engine
 
     try:
@@ -50,6 +50,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("policy_engine.initialized")
     except Exception:
         log.warning("policy_engine.init_failed", exc_info=True)
+
+    # 初始化 ReActEngine (V2.5 默认决策引擎, 替代 PolicyEngine)
+    from app.api.tasks import init_react_engine
+
+    try:
+        from app.api.tasks import get_event_bus
+
+        init_react_engine(deps.llm, get_event_bus())
+        log.info("react_engine.initialized")
+    except Exception:
+        log.warning("react_engine.init_failed", exc_info=True)
 
     # 初始化 TimelineRecorder (Phase 1.5: 执行轨迹落库)
     # 必须 await —— 同步订阅 EventBus,避免 create_task 异步启动时的竞态

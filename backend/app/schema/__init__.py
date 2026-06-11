@@ -3,7 +3,14 @@
 禁止反向依赖:api → service → repository → model。
 """
 
-from app.schema.agent import AgentMetrics, AgentOut
+from app.schema.agent import (
+    AgentDetailOut,
+    AgentMetrics,
+    AgentMetricsBucket,
+    AgentMetricsOut,
+    AgentOut,
+    AgentPauseResumeOut,
+)
 from app.schema.checkpoint import (
     CheckpointMetaSchema,
     CheckpointOut,
@@ -61,5 +68,9 @@ __all__ = [
     "RememberRequest",
     "RememberResponse",
     "AgentOut",
+    "AgentDetailOut",
     "AgentMetrics",
+    "AgentMetricsBucket",
+    "AgentMetricsOut",
+    "AgentPauseResumeOut",
 ]

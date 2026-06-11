@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from .types import TaskState
 
-# ── 状态转换表 ──
+# ── 状态转换表 (V2.5: +WAITING_USER) ──
 # 终态(COMPLETED / FAILED / CANCELLED)不能转出,不在任何 key 的值中
 _TRANSITIONS: dict[TaskState, set[TaskState]] = {
     TaskState.PENDING: {TaskState.RUNNING},
     TaskState.RUNNING: {
         TaskState.WAITING_CONFIRM,
+        TaskState.WAITING_USER,  # V2.5: 用户中断 / Agent 求助
         TaskState.PAUSED,
         TaskState.STOPPING,
         TaskState.FAILED,
@@ -19,6 +20,11 @@ _TRANSITIONS: dict[TaskState, set[TaskState]] = {
         TaskState.RUNNING,  # 用户确认后继续
         TaskState.STOPPING,  # 用户在确认期间点了取消
         TaskState.FAILED,
+    },
+    TaskState.WAITING_USER: {  # V2.5 新增
+        TaskState.RUNNING,  # 用户响应, 继续
+        TaskState.STOPPING,  # 用户取消
+        TaskState.FAILED,  # 超时 / 系统错误
     },
     TaskState.PAUSED: {
         TaskState.RUNNING,

@@ -61,6 +61,8 @@ class TaskStateManager:
         self._states: dict[str, TaskState] = {}
         # 记录每个 task 的最后变更原因,方便查询
         self._reasons: dict[str, str] = {}
+        # V2.5: 任务上下文存储 (如 ASK_HUMAN interrupt_payload 等)
+        self._contexts: dict[str, dict[str, dict]] = {}
         # 启动时 rehydrate 进来的任务,等待 watchdog 验证是否"真活着"
         # task_id → restore 时刻(monotonic 时间戳,不受系统时间调整影响)
         self._rehydrated: dict[str, float] = {}
@@ -231,6 +233,22 @@ class TaskStateManager:
     def is_terminal(self, task_id: str) -> bool:
         """判断任务是否已结束"""
         return is_terminal(self.get_state(task_id))
+
+    # ── V2.5: 任务上下文存储 (ASK_HUMAN interrupt_payload 等) ──
+
+    def set_context(self, task_id: str, key: str, value: dict) -> None:
+        """设置任务级上下文 —— 纯内存, 进程重启丢失 (可接受)"""
+        if task_id not in self._contexts:
+            self._contexts[task_id] = {}
+        self._contexts[task_id][key] = value
+
+    def get_context(self, task_id: str, key: str) -> dict | None:
+        """获取任务级上下文"""
+        return self._contexts.get(task_id, {}).get(key)
+
+    def clear_context(self, task_id: str) -> None:
+        """清除任务的所有上下文 (任务结束时调用)"""
+        self._contexts.pop(task_id, None)
 
     def rehydrated_count(self) -> int:
         """当前等待 watchdog 验证的 rehydrated 任务数(供测试 / 监控用)"""

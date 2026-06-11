@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,5 +33,20 @@ class TaskStep(Base, UUIDMixin):
     action: Mapped[str] = mapped_column(String, nullable=False)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # V2.5: 可观测增强 — token/延迟/成本追踪
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 步骤执行耗时
+    llm_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)  # LLM 调用延迟
+    tokens_prompt: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 输入 token 数
+    tokens_completion: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 输出 token 数
+    model_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 使用的模型名
+    reasoning: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # ReAct 推理文本 (think 步骤)
+    step_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="act"
+    )  # observe|think|act|human
+    dom_summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # Worker 提取的 DOM 摘要
+    visible_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # Worker 提取的可见文本
 
     task: Mapped[Task] = relationship(back_populates="steps")

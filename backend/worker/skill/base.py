@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class SkillResult(BaseModel):
-    """Skill 执行结果 —— 纯数据,不含决策"""
+    """Skill 执行结果 —— 纯数据,不含决策 (V2.5: +dom_summary/visible_text)"""
 
     status: Literal["ok", "error"]
     summary: str
@@ -20,6 +20,8 @@ class SkillResult(BaseModel):
     title: str | None = None
     screenshot_key: str | None = None  # V1: 本地文件相对路径; V2: S3 key
     error: str | None = None
+    dom_summary: str = ""  # V2.5: 结构化 DOM 摘要 (可交互元素, ≤3000 字符)
+    visible_text: str = ""  # V2.5: 页面可见文本 (≤2000 字符)
 
 
 class BaseSkill(ABC):

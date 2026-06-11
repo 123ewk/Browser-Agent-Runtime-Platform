@@ -1,26 +1,31 @@
-"""Dashboard 统计 API —— V1 最小可用版本
+"""Dashboard 统计 API —— V2.5 SQL 聚合替代 Python 过滤
 
 端点:
   GET /stats/dashboard?window=24h  — Dashboard 顶部统计卡片
 
-V1 限制:
-- tokens / cost 字段返回 0(tracking 未实现)
-- deltaPct 字段返回 0(无历史基线)
+V2.5 改进:
+- 使用参数化 SQL COUNT(*) FILTER 替代 Python 过滤
+- tokens/cost 从 tasks 表直接聚合 (不再硬编码 0)
+- 一次查询返回所有卡片数据
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import text
 
 from app.core.deps import get_current_user_id
 from app.infra.postgres import PostgresClient
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 log = structlog.get_logger(__name__)
+
+# 窗口映射
+_WINDOW_HOURS: dict[str, int] = {"1h": 1, "24h": 24, "7d": 168, "30d": 720}
 
 
 def _get_pg() -> PostgresClient | None:
@@ -37,45 +42,59 @@ async def get_dashboard_stats(
 ) -> dict:
     """Dashboard 顶部统计聚合
 
-    V1: 从 DB 统计 tasksToday / running / successRate,
-    tokens/cost 返回 0(后续 Phase 2 实现 token tracking)。
+    V2.5: SQL 聚合一次查询返回所有卡片数据。
+    window_start 参数化避免计划缓存失效。
     """
     pg = _get_pg()
+    window_hours = _WINDOW_HOURS.get(window, 24)
+    window_start = datetime.now(UTC) - timedelta(hours=window_hours)
+
     tasks_today = 0
     success_rate = 0.0
+    tokens_today = 0
+    cost_today = 0.0
 
     if pg is not None:
-        from app.repository.task import TaskRepository
-
         session = pg.session()
         try:
-            repo = TaskRepository(session)
-            result = await repo.list_by_user(user_id, limit=1000, offset=0)
-            now_ts = datetime.now(UTC)
-            # 计算 tasksToday (最近 24h)
-            for t in result.items:
-                delta = now_ts - t.created_at
-                if delta.total_seconds() < 86400:
-                    tasks_today += 1
-            # 计算 successRate (非 pending/running 中成功的比例)
-            terminal = [t for t in result.items if t.status in ("completed", "failed", "cancelled")]
-            if terminal:
-                success_count = sum(1 for t in terminal if t.status == "completed")
-                success_rate = success_count / len(terminal)
+            stmt = text(
+                """
+                SELECT
+                  COUNT(*) FILTER (WHERE created_at >= :window_start) AS tasks_today,
+                  COUNT(*) FILTER (WHERE status IN ('completed','failed','cancelled')
+                    AND updated_at >= :window_start) AS terminal_count,
+                  COUNT(*) FILTER (WHERE status = 'completed'
+                    AND updated_at >= :window_start) AS success_count,
+                  COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= :window_start), 0) AS tokens_today,
+                  COALESCE(SUM(total_cost_usd) FILTER (WHERE created_at >= :window_start), 0) AS cost_today
+                FROM tasks
+                WHERE user_id = :user_id
+                """
+            )
+            row = (
+                await session.execute(
+                    stmt,
+                    {"user_id": user_id, "window_start": window_start},
+                )
+            ).one()
             await session.commit()
+
+            tasks_today = int(row.tasks_today)
+            terminal = int(row.terminal_count)
+            if terminal > 0:
+                success_rate = int(row.success_count) / terminal
+            tokens_today = int(row.tokens_today)
+            cost_today = float(row.cost_today)
         except Exception:
             await session.rollback()
             log.warning("stats.query_failed", exc_info=True)
         finally:
             await session.close()
 
-    # running 从内存 TaskStateManager 获取
-    from app.api.tasks import get_task_state_manager
+    # running 从内存获取
+    from app.api.tasks import _active_runners, get_task_state_manager
 
     mgr = get_task_state_manager()
-    # TaskStateManager 没有 list_all, 用简单方式: 遍历 _active_runners
-    from app.api.tasks import _active_runners
-
     running = sum(1 for task_id in _active_runners if mgr.get_state(task_id).value == "running")
 
     return {
@@ -84,9 +103,9 @@ async def get_dashboard_stats(
         "tasksTodayDeltaPct": 0,
         "running": running,
         "successRate": round(success_rate, 4),
-        "tokensToday": 0,
+        "tokensToday": tokens_today,
         "tokensTodayDeltaPct": 0,
-        "costTodayUsd": 0,
+        "costTodayUsd": cost_today,
         "estimatedMonthlyCostUsd": 0,
         "agents": [],
     }

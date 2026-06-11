@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,6 +45,11 @@ class Task(Base, UUIDMixin):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    # V2.5: 可观测增强 — token/成本追踪
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False, default=0)
+    llm_model_used: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="tasks")
     steps: Mapped[list[TaskStep]] = relationship(

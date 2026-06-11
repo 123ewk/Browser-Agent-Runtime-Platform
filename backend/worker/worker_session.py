@@ -19,6 +19,7 @@ Phase 2.1: Skill-based 执行 + Trajectory 累积 + 内部执行循环
 from __future__ import annotations
 
 import asyncio
+import time as _time_module
 import traceback
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -69,6 +70,10 @@ class WorkerSession:
         self._max_steps = 20
         # Worker 当前状态,供心跳上报给 Runtime Watchdog
         self._worker_status = WorkerStatus.IDLE
+        # V2.5: INTERRUPT/PAUSE 标志位
+        self._interrupt_requested: bool = False  # INTERRUPT: 放弃当前 step
+        self._pause_after_step: bool = False  # PAUSE: 完成当前 step 后挂起
+        self._step_start_time: float = 0.0  # V2.5: 步骤开始时间 (用于 duration_ms 计算)
         self._heartbeat_sender = HeartbeatSender(
             task_id,
             status_cb=lambda: self._worker_status,
@@ -170,11 +175,43 @@ class WorkerSession:
                             retryable=False,
                         )
 
+                elif command.type == CommandType.INTERRUPT:
+                    # V2.5: Runtime 请求中断当前动作
+                    self._interrupt_requested = True
+                    self._worker_status = WorkerStatus.WAITING_USER
+                    emit_event(
+                        RuntimeEvent(
+                            event_id=_new_event_id(),
+                            event=EventType.INTERRUPTED,
+                            ts=datetime.now(UTC),
+                            task_id=self._task_id,
+                        )
+                    )
+                    # 不 break —— 回到循环顶, 等待 RESUME 或 STOP
+
+                elif command.type == CommandType.PAUSE:
+                    # V2.5: Runtime 请求完成当前 step 后挂起
+                    self._pause_after_step = True
+                    self._worker_status = WorkerStatus.WAITING_USER
+
+                elif command.type == CommandType.RESUME:
+                    # V2.5: 从 INTERRUPT/PAUSE 恢复
+                    self._interrupt_requested = False
+                    self._pause_after_step = False
+                    self._worker_status = WorkerStatus.RUNNING
+                    emit_event(
+                        RuntimeEvent(
+                            event_id=_new_event_id(),
+                            event=EventType.RESUMED,
+                            ts=datetime.now(UTC),
+                            task_id=self._task_id,
+                        )
+                    )
+                    # Runtime 会在之后发 CONTINUE 带新动作
+
                 elif command.type == CommandType.STOP:
                     await self._handle_stop()
                     return
-
-                # V2: REJECT
 
                 # 步数上限检查
                 if started and self._step_count >= self._max_steps:
@@ -245,17 +282,46 @@ class WorkerSession:
             await self._execute_action(action, skill_name)
 
     async def _execute_action(self, action: ActionDetail, skill_name: str) -> None:
-        """执行单个动作: Skill.execute(action) → Trajectory.add_step → emit
+        """执行单个动作 —— V2.5: +INTERRUPT/PAUSE 检查 + duration_ms + dom_summary/visible_text
 
         设计约束: 不做 retry,不做 fallback,不做决策。
         失败时通过 Trajectory 回传 error,Runtime 决定下一步。
         """
+        # V2.5: 检查 INTERRUPT/PAUSE 标志 (避免"已自增但被中断" 的序号不一致)
+        if self._interrupt_requested or self._pause_after_step:
+            return  # Runtime 会重新发 CONTINUE
+
+        # V2.5: NEED_CONFIRM 检查 (在 step_count 自增之前, 避免确认拒绝后多算一步)
+        from worker.skill.risk_heuristics import needs_confirm
+
+        should_confirm, confirm_reason = needs_confirm(
+            action, self._browser.page.url if self._browser else ""
+        )
+        if should_confirm:
+            emit_event(
+                RuntimeEvent(
+                    event_id=_new_event_id(),
+                    event=EventType.NEED_CONFIRM,
+                    ts=datetime.now(UTC),
+                    task_id=self._task_id,
+                    payload={
+                        "action_tag": action.type,
+                        "question": f"即将执行高风险操作: {action.description}。原因: {confirm_reason}",
+                        "context": {"url": self._browser.page.url if self._browser else ""},
+                    },
+                )
+            )
+            self._worker_status = WorkerStatus.WAITING_CONFIRM
+            return  # 不执行, 等待 Runtime 发 CONTINUE(approved=True/False)
+
         self._step_count += 1
+        self._step_start_time = _time_module.monotonic()
 
         # STEP_START
         self._emit_step_start(self._step_count, action.type, action.description)
 
         # 执行
+        result = None
         try:
             skill = self._registry.get(skill_name)
             result = await skill.execute(action)
@@ -272,6 +338,7 @@ class WorkerSession:
                 retryable=True,
                 step_index=self._step_count,
             )
+            duration_ms = int((_time_module.monotonic() - self._step_start_time) * 1000)
             self._emit_step_complete(
                 self._step_count,
                 action.type,
@@ -279,6 +346,26 @@ class WorkerSession:
                 url=None,
                 title=None,
                 error=str(e),
+                duration_ms=duration_ms,
+            )
+            return
+
+        # 计算执行耗时
+        duration_ms = int((_time_module.monotonic() - self._step_start_time) * 1000)
+
+        # V2.5: INTERRUPT 检查 (在 emit_step_complete 之前)
+        if self._interrupt_requested:
+            self._emit_step_complete(
+                self._step_count,
+                action.type,
+                "步骤被用户中断",
+                url=result.url if result else None,
+                title=result.title if result else None,
+                duration_ms=duration_ms,
+                dom_summary=result.dom_summary if result else "",
+                visible_text=result.visible_text if result else "",
+                aborted=True,
+                abort_reason="user_interrupt",
             )
             return
 
@@ -295,7 +382,7 @@ class WorkerSession:
         if result and result.screenshot_key:
             self._emit_screenshot(result.screenshot_key)
 
-        # STEP_COMPLETE (含 trajectory)
+        # STEP_COMPLETE (含 trajectory + V2.5 新字段)
         if result and result.status == "ok":
             self._emit_step_complete(
                 self._step_count,
@@ -303,11 +390,12 @@ class WorkerSession:
                 result.summary,
                 url=result.url,
                 title=result.title,
+                duration_ms=duration_ms,
+                dom_summary=result.dom_summary,
+                visible_text=result.visible_text,
             )
         else:
             error_msg = result.error if result else "unknown"
-            # error_msg 在静态分析上是 str | None(result.error 可空),
-            # 但走到 else 分支说明 result 存在(error 字段可能为 None)—— 兜底为 "unknown"
             self._emit_error(
                 "STEP_FAILED",
                 str(error_msg) if error_msg else "unknown",
@@ -320,8 +408,14 @@ class WorkerSession:
                 f"Step failed: {error_msg}",
                 url=result.url if result else None,
                 title=result.title if result else None,
-                error=error_msg,
+                duration_ms=duration_ms,
+                dom_summary=result.dom_summary if result else "",
+                visible_text=result.visible_text if result else "",
             )
+
+        # V2.5: PAUSE 检查 (在 emit_step_complete 之后)
+        if self._pause_after_step:
+            self._worker_status = WorkerStatus.WAITING_USER
 
     async def _handle_stop(self) -> None:
         """处理 STOP 命令"""
@@ -359,6 +453,11 @@ class WorkerSession:
         url: str | None = None,
         title: str | None = None,
         error: str | None = None,
+        duration_ms: int | None = None,  # V2.5
+        dom_summary: str = "",  # V2.5
+        visible_text: str = "",  # V2.5
+        aborted: bool = False,  # V2.5
+        abort_reason: str = "",  # V2.5
     ) -> None:
         emit_event(
             RuntimeEvent(
@@ -372,6 +471,11 @@ class WorkerSession:
                     summary=summary,
                     url=url,
                     title=title,
+                    duration_ms=duration_ms,
+                    dom_summary=dom_summary,
+                    visible_text=visible_text,
+                    aborted=aborted,
+                    abort_reason=abort_reason,
                 ).model_dump(),
             )
         )

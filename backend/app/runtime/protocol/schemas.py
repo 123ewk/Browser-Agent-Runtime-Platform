@@ -66,15 +66,21 @@ class StepStartPayload(BaseModel):
 
 
 class StepCompletePayload(BaseModel):
-    """STEP_COMPLETE 事件的 payload"""
+    """STEP_COMPLETE 事件的 payload (V2.5 扩展: +dom_summary/visible_text/step_type/reasoning/aborted/abort_reason)"""
 
     index: int
     action: str
     summary: str  # 执行结果摘要
     url: str | None = None  # 执行后所在页面 URL
     title: str | None = None  # 页面标题 (Trajectory 回传)
-    duration_ms: int | None = None  # 执行耗时(毫秒)
+    duration_ms: int | None = None  # 执行耗时(毫秒), V2.0 已定义 V2.5 真正填充
     is_terminal: bool = False  # Worker 报告 local terminal signal
+    dom_summary: str = ""  # V2.5: Worker 导航类动作后提取的 DOM 摘要 (结构化可交互元素, ≤3000 字符)
+    visible_text: str = ""  # V2.5: Worker 导航类动作后提取的可见文本 (≤2000 字符)
+    step_type: str = "act"  # V2.5: observe|think|act|human
+    reasoning: str = ""  # V2.5: think 步骤的推理文本
+    aborted: bool = False  # V2.5: True = 步骤被 INTERRUPT 强制中止
+    abort_reason: str = ""  # V2.5: user_interrupt | agent_ask_human | system
 
 
 class ScreenshotPayload(BaseModel):
@@ -200,6 +206,77 @@ class StopPayload(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+# V2.5 新增 Payload
+# ═══════════════════════════════════════════════════════════════
+
+
+class ThinkCompletePayload(BaseModel):
+    """THINK_COMPLETE 事件的 payload (Runtime 合成)"""
+
+    step_index: int
+    reasoning: str  # 完整推理文本 (Timeline 展示用)
+    decision: str  # "ACT" | "ASK_HUMAN" | "DONE"
+    confidence: float = 1.0
+    tokens_used: int = 0  # 本次 LLM 调用消耗的 token
+    llm_latency_ms: int = 0  # LLM 调用延迟
+
+
+class NeedHumanPayload(BaseModel):
+    """NEED_HUMAN 事件的 payload (Worker 发射, BrowserSkill 检测到阻塞)"""
+
+    block_type: str  # login | captcha | paywall | consent | other
+    question: str  # 问用户的问题
+    context_url: str | None = None
+    screenshot_key: str | None = None  # S3 key, 前端展示截图
+
+
+class ObserveCompletePayload(BaseModel):
+    """OBSERVE_COMPLETE 事件的 payload (Runtime 合成, 源数据来自 STEP_COMPLETE)"""
+
+    step_index: int
+    url: str | None = None
+    title: str | None = None
+    dom_summary: str = ""  # 压缩后的 DOM 文本 (Worker 上报, Runtime 转发)
+    visible_text: str = ""  # 页面可见文本 (前 2000 字符, Worker 上报, Runtime 转发)
+
+
+class InterruptPayload(BaseModel):
+    """INTERRUPT 命令的 payload (Runtime → Worker)"""
+
+    reason: str  # "user_interrupt" | "agent_ask_human" | "system"
+    user_message: str = ""  # 用户说的内容 (用户主动中断时填)
+    ask_human_block_type: str = ""  # Agent 求助时的 block_type
+    ask_human_question: str = ""  # Agent 求助时的 question
+
+
+class ResumePayload(BaseModel):
+    """RESUME 命令的统一 payload (Runtime → Worker)
+
+    无论来自 PAUSE 还是 INTERRUPT, Worker 都按此解析。
+    Worker 不区分来源, 只把 payload 透传给 Runtime。
+    """
+
+    feedback: str = ""  # 用户反馈 (空=纯恢复, 非空=用户补充指令)
+    ask_human_block_type: str = ""  # 透传: Agent 求助时的 block_type
+    ask_human_question: str = ""  # 透传: Agent 求助时的 question
+    previous_interrupt_reason: str = ""  # 透传: 上一次 INTERRUPT 的 reason
+
+
+class PausePayload(BaseModel):
+    """PAUSE 命令的 payload (Runtime → Worker)"""
+
+    reason: str = "user_requested"  # user_requested | maintenance | system
+
+
+class StepAbortedPayload(BaseModel):
+    """步骤中止的上下文 —— 供 TimelineRecorder 写入 task_steps"""
+
+    step_index: int
+    aborted: bool = True
+    abort_reason: str = ""  # user_interrupt | agent_ask_human | system
+
+
+# ═══════════════════════════════════════════════════════════════
 # Worker 内部模型(不在 stdin/stdout 协议中,供 Worker 模块使用)
 # ═══════════════════════════════════════════════════════════════
 
@@ -219,12 +296,17 @@ class ActionDetail(BaseModel):
 
 
 class DecisionResponse(BaseModel):
-    """PolicyEngine 决策输出"""
+    """决策引擎输出 (V2.5 扩展: +decision_type/confidence/tokens_used/model_used/llm_latency_ms)"""
 
     skill: str  # "browser"
     action: ActionDetail
     reasoning: str = ""  # LLM 决策理由 (debug 用)
     is_terminal: bool = False  # Policy 建议终止 (Runtime 最终判定)
+    decision_type: str = "ACT"  # V2.5: ACT|ASK_HUMAN|DONE (ReActDecisionType)
+    confidence: float = 1.0  # V2.5: LLM 置信度
+    tokens_used: int = 0  # V2.5: 本次调用消耗的 token
+    model_used: str = ""  # V2.5: 使用的模型名
+    llm_latency_ms: int = 0  # V2.5: LLM 调用延迟
 
 
 class ExecutionContract(BaseModel):

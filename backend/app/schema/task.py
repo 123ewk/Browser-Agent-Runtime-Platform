@@ -33,7 +33,7 @@ class TaskUpdate(BaseModel):
 
 
 class TaskOut(BaseModel):
-    """任务出参 —— result 为 None 表示任务尚未完成。"""
+    """任务出参 —— V2.5: +total_tokens/total_cost_usd/llm_model_used"""
 
     id: uuid.UUID
     user_id: uuid.UUID
@@ -43,6 +43,9 @@ class TaskOut(BaseModel):
     result: dict | None = None
     created_at: datetime
     updated_at: datetime
+    total_tokens: int = 0  # V2.5: 任务总 token
+    total_cost_usd: float = 0.0  # V2.5: 任务总成本
+    llm_model_used: str | None = None  # V2.5: 使用的模型
 
     model_config = {"from_attributes": True}
 
